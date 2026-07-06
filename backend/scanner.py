@@ -21,9 +21,9 @@ WATCHED_SYMBOLS = [
 WATCHLIST_FILE = "watchlist_state.json"
 
 # Initialize CCXT exchange client
-exchange = ccxt.binance({
+exchange = ccxt.bybit({
     'enableRateLimit': True,
-    'options': {'defaultType': 'future'} # Futures or spot (spot is standard, futures has higher volume)
+    'options': {'defaultType': 'swap'} # Bybit swaps/futures have high liquidity and no aggressive shared IP bans
 })
 
 def load_local_watchlist():
