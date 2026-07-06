@@ -15,7 +15,7 @@ load_dotenv()
 WATCHED_SYMBOLS = [
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "ADA/USDT",
     "XRP/USDT", "DOT/USDT", "LINK/USDT", "DOGE/USDT", "AVAX/USDT",
-    "MATIC/USDT", "LTC/USDT", "UNI/USDT", "NEAR/USDT", "ATOM/USDT"
+    "POL/USDT", "LTC/USDT", "UNI/USDT", "NEAR/USDT", "ATOM/USDT"
 ]
 
 WATCHLIST_FILE = "watchlist_state.json"
@@ -202,15 +202,15 @@ def scan_all_markets():
                     fib_range = abs(leg_end - leg_start)
                     
                     if signal_direction == "BUY":
-                        # For long: Entry at 0.5 Fib (midpoint), SL at leg start (0.0 Fib)
+                        # For long: Entry at 0.5 Fib, SL at 0.85 Fib (slightly wider than 0.786)
                         entry_price = leg_end - (0.5 * fib_range)
-                        sl_price = leg_start
+                        sl_price = leg_end - (0.85 * fib_range)
                         risk = entry_price - sl_price
                         tp_price = entry_price + (2 * risk) # 1:2 R:R
                     else:
-                        # For short: Entry at 0.5 Fib (midpoint), SL at leg start (0.0 Fib)
+                        # For short: Entry at 0.5 Fib, SL at 0.85 Fib (slightly wider than 0.786)
                         entry_price = leg_end + (0.5 * fib_range)
-                        sl_price = leg_start
+                        sl_price = leg_end + (0.85 * fib_range)
                         risk = sl_price - entry_price
                         tp_price = entry_price - (2 * risk) # 1:2 R:R
                         
