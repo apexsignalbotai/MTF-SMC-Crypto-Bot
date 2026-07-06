@@ -286,10 +286,12 @@ def scan_all_markets():
                     save_local_watchlist(local_watchlist)
             
             scanned_count += 1
+            time.sleep(0.5) # Delay to respect Bybit rate limit
             
         except Exception as e:
             errors_count += 1
             print(f"Error scanning {symbol}: {e}")
+            time.sleep(0.5) # Sleep on error too to prevent spamming
             
     execution_time = time.time() - start_time
     
