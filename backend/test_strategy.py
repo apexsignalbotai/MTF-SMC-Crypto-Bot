@@ -35,48 +35,48 @@ class TestSMCCryptoBotStrategy(unittest.TestCase):
     def test_fibonacci_ote_long_calculation(self):
         """Verify Fib OTE (0.5) entry, SL, and TP for a Bullish setup (LONG)."""
         # Bullish setup: trigger leg goes from swing low to high
-        leg_start = 100.0 # Swing Low / SL
+        leg_start = 100.0 # Swing Low
         leg_end = 200.0   # Break High / Leg High
         
         # Math:
         # Range = 100.0
         # Entry = 200 - (0.5 * 100) = 150.0
-        # SL = 100.0 (leg start)
-        # Risk = Entry - SL = 50.0
-        # TP = Entry + (2 * Risk) = 150 + 100 = 250.0
+        # SL = 200 - (0.85 * 100) = 115.0 (slightly wider than 0.786)
+        # Risk = Entry - SL = 35.0
+        # TP = Entry + (2 * Risk) = 150 + 70 = 220.0
         
         fib_range = abs(leg_end - leg_start)
         entry_price = leg_end - (0.5 * fib_range)
-        sl_price = leg_start
+        sl_price = leg_end - (0.85 * fib_range)
         risk = entry_price - sl_price
         tp_price = entry_price + (2 * risk)
         
         self.assertEqual(entry_price, 150.0)
-        self.assertEqual(sl_price, 100.0)
-        self.assertEqual(tp_price, 250.0)
+        self.assertEqual(sl_price, 115.0)
+        self.assertEqual(tp_price, 220.0)
 
     def test_fibonacci_ote_short_calculation(self):
         """Verify Fib OTE (0.5) entry, SL, and TP for a Bearish setup (SHORT)."""
         # Bearish setup: trigger leg goes from swing high to low
-        leg_start = 200.0 # Swing High / SL
+        leg_start = 200.0 # Swing High
         leg_end = 100.0   # Break Low / Leg Low
         
         # Math:
         # Range = 100.0
         # Entry = 100 + (0.5 * 100) = 150.0
-        # SL = 200.0 (leg start)
-        # Risk = SL - Entry = 50.0
-        # TP = Entry - (2 * Risk) = 150 - 100 = 50.0
+        # SL = 100 + (0.85 * 100) = 185.0 (slightly wider than 0.786)
+        # Risk = SL - Entry = 35.0
+        # TP = Entry - (2 * Risk) = 150 - 70 = 80.0
         
         fib_range = abs(leg_end - leg_start)
         entry_price = leg_end + (0.5 * fib_range)
-        sl_price = leg_start
+        sl_price = leg_end + (0.85 * fib_range)
         risk = sl_price - entry_price
         tp_price = entry_price - (2 * risk)
         
         self.assertEqual(entry_price, 150.0)
-        self.assertEqual(sl_price, 200.0)
-        self.assertEqual(tp_price, 50.0)
+        self.assertEqual(sl_price, 185.0)
+        self.assertEqual(tp_price, 80.0)
 
 if __name__ == "__main__":
     unittest.main()
