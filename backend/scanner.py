@@ -147,10 +147,9 @@ def find_swings(df: pd.DataFrame, window: int = 2):
     return df
 
 def scan_all_markets():
-    """Main scan function executed every hour."""
+    """Main scan function executed every hour (completely stateless)."""
     start_time = time.time()
-    print(f"[{datetime.now().isoformat()}] Starting hourly market scan...")
-    local_watchlist = load_local_watchlist()
+    print(f"[{datetime.now().isoformat()}] Starting hourly market scan (stateless)...")
     
     symbols_to_scan = get_watched_symbols()
     scanned_count = 0
@@ -168,132 +167,112 @@ def scan_all_markets():
             w_high, w_low = get_weekly_high_low(symbol)
             if w_high is None or w_low is None:
                 continue
-            
-            time.sleep(0.3) # Tiny sleep between 1W and 1H requests to prevent bursts
                 
+            time.sleep(0.3) # Sleep to respect Bybit rate limit
+            
             # 3. Fetch 1H candles
             df = fetch_candles(symbol, "1h", limit=100)
-            if df is None or len(df) < 5:
+            if df is None or len(df) < 20:
                 continue
                 
-            last_candle = df.iloc[-2] # Last completed candle
+            # Look back up to 48 closed candles before the last completed candle (index -2)
+            lookback_depth = min(48, len(df) - 3)
             
-            # Check if this pair is already on our watchlist
-            is_watched = symbol in local_watchlist
+            trigger_found = False
+            trigger_type = None # "HIGH" or "LOW"
+            trigger_index = -1
             
-            if not is_watched:
-                # Check for Breakout (body close), Sweep (wick only), or Touch of Weekly levels
-                has_broken_high = last_candle["close"] >= w_high
-                has_swept_high = last_candle["high"] >= w_high and last_candle["close"] < w_high
-                
-                has_broken_low = last_candle["close"] <= w_low
-                has_swept_low = last_candle["low"] <= w_low and last_candle["close"] > w_low
-                
-                trigger = None
-                trigger_level = None
-                
-                if has_broken_high:
-                    trigger = "BREAK_HIGH"
-                    trigger_level = w_high
-                elif has_swept_high:
-                    trigger = "SWEEP_HIGH"
-                    trigger_level = w_high
-                elif has_broken_low:
-                    trigger = "BREAK_LOW"
-                    trigger_level = w_low
-                elif has_swept_low:
-                    trigger = "SWEEP_LOW"
-                    trigger_level = w_low
+            # Search for the most recent weekly high/low touch/break
+            for i in range(len(df) - 2 - lookback_depth, len(df) - 1):
+                candle = df.iloc[i]
+                if candle["high"] >= w_high:
+                    trigger_found = True
+                    trigger_type = "HIGH"
+                    trigger_index = i
+                elif candle["low"] <= w_low:
+                    trigger_found = True
+                    trigger_type = "LOW"
+                    trigger_index = i
                     
-                if trigger:
-                    print(f"Adding {symbol} to watchlist: Detected {trigger} at {trigger_level}")
-                    local_watchlist[symbol] = {
-                        "trigger": trigger,
-                        "trigger_level": trigger_level,
-                        "added_at": datetime.now(timezone.utc).isoformat()
-                    }
-                    save_local_watchlist(local_watchlist)
-                    
-            else:
-                # If pair is on watchlist, look for 1H structure change (BOS/CHOCH)
-                df_swings = find_swings(df, window=2)
+            if not trigger_found:
+                scanned_count += 1
+                time.sleep(1.0)
+                continue
                 
-                # Get the most recent swing high and swing low from the completed candles (excluding live index -1)
-                swing_high_rows = df_swings.iloc[:-1].dropna(subset=["swing_high"])
-                swing_low_rows = df_swings.iloc[:-1].dropna(subset=["swing_low"])
+            # 4. Check if the last completed candle (index -2) triggered a BOS or CHOCH
+            # Swing points must be calculated from historical data
+            df_swings = find_swings(df, window=2)
+            
+            # Last completed candle
+            last_candle = df.iloc[-2]
+            close_price = float(last_candle["close"])
+            
+            # Get swing points up to index -2
+            swing_high_rows = df_swings.iloc[:len(df)-1].dropna(subset=["swing_high"])
+            swing_low_rows = df_swings.iloc[:len(df)-1].dropna(subset=["swing_low"])
+            
+            if len(swing_high_rows) == 0 or len(swing_low_rows) == 0:
+                scanned_count += 1
+                time.sleep(1.0)
+                continue
                 
-                if len(swing_high_rows) == 0 or len(swing_low_rows) == 0:
-                    continue
-                    
-                recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
-                recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
+            recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
+            recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
+            
+            signal_direction = None
+            setup_type = None
+            leg_start = None
+            leg_end = float(last_candle["high"] if close_price > recent_swing_high else last_candle["low"])
+            
+            # Bullish break (close above recent swing high)
+            # The close must be after the trigger event
+            if close_price > recent_swing_high and (len(df) - 2) >= trigger_index:
+                signal_direction = "BUY"
+                setup_type = "CHOCH" if trigger_type == "LOW" else "BOS"
+                leg_start = float(swing_low_rows.iloc[-1]["swing_low"])
                 
-                trigger_info = local_watchlist[symbol]
-                trigger_type = trigger_info["trigger"]
+            # Bearish break (close below recent swing low)
+            elif close_price < recent_swing_low and (len(df) - 2) >= trigger_index:
+                signal_direction = "SELL"
+                setup_type = "CHOCH" if trigger_type == "HIGH" else "BOS"
+                leg_start = float(swing_high_rows.iloc[-1]["swing_high"])
                 
-                # We check the last closed candle body close for BOS/CHOCH
-                close_price = float(last_candle["close"])
+            if signal_direction and leg_start and leg_end:
+                fib_range = abs(leg_end - leg_start)
                 
-                signal_direction = None
-                setup_type = None
-                leg_start = None
-                leg_end = float(last_candle["high"] if close_price > recent_swing_high else last_candle["low"])
+                if signal_direction == "BUY":
+                    # Entry at 0.5 Fib, SL at 0.85 Fib
+                    entry_price = leg_end - (0.5 * fib_range)
+                    sl_price = leg_end - (0.85 * fib_range)
+                    risk = entry_price - sl_price
+                    tp_price = entry_price + (2 * risk) # 1:2 R:R
+                else:
+                    # Entry at 0.5 Fib, SL at 0.85 Fib
+                    entry_price = leg_end + (0.5 * fib_range)
+                    sl_price = leg_end + (0.85 * fib_range)
+                    risk = sl_price - entry_price
+                    tp_price = entry_price - (2 * risk) # 1:2 R:R
+                    
+                new_signal = db.create_signal(
+                    pair=symbol,
+                    direction=signal_direction,
+                    trigger_type=setup_type,
+                    entry=entry_price,
+                    sl=sl_price,
+                    tp=tp_price
+                )
                 
-                # Bullish setup (CHOCH or BOS)
-                if close_price > recent_swing_high:
-                    signal_direction = "BUY"
-                    setup_type = "CHOCH" if "LOW" in trigger_type else "BOS"
-                    leg_start = float(swing_low_rows.iloc[-1]["swing_low"])
-                    
-                # Bearish setup
-                elif close_price < recent_swing_low:
-                    signal_direction = "SELL"
-                    setup_type = "CHOCH" if "HIGH" in trigger_type else "BOS"
-                    leg_start = float(swing_high_rows.iloc[-1]["swing_high"])
-                    
-                if signal_direction and leg_start and leg_end:
-                    # Calculate Fibonacci Retracement Entry, SL, and TP
-                    # OTE entry is in 0.5 - 0.618 zone. We set entry exactly at 0.5 Fib level.
-                    fib_range = abs(leg_end - leg_start)
-                    
-                    if signal_direction == "BUY":
-                        # For long: Entry at 0.5 Fib, SL at 0.85 Fib (slightly wider than 0.786)
-                        entry_price = leg_end - (0.5 * fib_range)
-                        sl_price = leg_end - (0.85 * fib_range)
-                        risk = entry_price - sl_price
-                        tp_price = entry_price + (2 * risk) # 1:2 R:R
-                    else:
-                        # For short: Entry at 0.5 Fib, SL at 0.85 Fib (slightly wider than 0.786)
-                        entry_price = leg_end + (0.5 * fib_range)
-                        sl_price = leg_end + (0.85 * fib_range)
-                        risk = sl_price - entry_price
-                        tp_price = entry_price - (2 * risk) # 1:2 R:R
-                        
-                    # Save to DB
-                    new_signal = db.create_signal(
-                        pair=symbol,
-                        direction=signal_direction,
-                        trigger_type=setup_type,
-                        entry=entry_price,
-                        sl=sl_price,
-                        tp=tp_price
-                    )
-                    
-                    if new_signal:
-                        print(f"SUCCESS: Generated {setup_type} signal for {symbol}!")
-                        tg.alert_new_signal(new_signal)
-                        
-                    # Remove from watchlist once signal is generated
-                    del local_watchlist[symbol]
-                    save_local_watchlist(local_watchlist)
+                if new_signal:
+                    print(f"SUCCESS STATELESS: Generated {setup_type} signal for {symbol}!")
+                    tg.alert_new_signal(new_signal)
             
             scanned_count += 1
-            time.sleep(1.0) # Delay to respect Bybit rate limit
+            time.sleep(1.0) # Delay to respect rate limit
             
         except Exception as e:
             errors_count += 1
             print(f"Error scanning {symbol}: {e}")
-            time.sleep(1.0) # Sleep on error too to prevent spamming
+            time.sleep(1.0)
             
     execution_time = time.time() - start_time
     
