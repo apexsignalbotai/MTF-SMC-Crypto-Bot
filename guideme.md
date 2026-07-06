@@ -71,6 +71,10 @@ CREATE OR REPLACE TRIGGER trigger_clean_old_logs
 AFTER INSERT ON public.system_logs
 FOR EACH STATEMENT
 EXECUTE FUNCTION clean_old_logs();
+
+-- 6. Disable Row Level Security (RLS) to allow inserts via API Key
+ALTER TABLE public.signals DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.system_logs DISABLE ROW LEVEL SECURITY;
 ```
 
 ---
