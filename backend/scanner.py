@@ -180,12 +180,12 @@ def scan_all_markets():
             is_watched = symbol in local_watchlist
             
             if not is_watched:
-                # Check for Breakout (body close) or Sweep (wick only) of Weekly levels
-                has_broken_high = last_candle["close"] > w_high
-                has_swept_high = last_candle["high"] > w_high and last_candle["close"] <= w_high
+                # Check for Breakout (body close), Sweep (wick only), or Touch of Weekly levels
+                has_broken_high = last_candle["close"] >= w_high
+                has_swept_high = last_candle["high"] >= w_high and last_candle["close"] < w_high
                 
-                has_broken_low = last_candle["close"] < w_low
-                has_swept_low = last_candle["low"] < w_low and last_candle["close"] >= w_low
+                has_broken_low = last_candle["close"] <= w_low
+                has_swept_low = last_candle["low"] <= w_low and last_candle["close"] > w_low
                 
                 trigger = None
                 trigger_level = None
