@@ -21,8 +21,14 @@ async def lifespan(app: FastAPI):
     # Run market scanner every 1 hour (on the hour)
     scheduler.add_job(sc.scan_all_markets, 'cron', hour='*', minute='0', id='market_scan_job')
     
-    # Trigger a dry run scan on startup to populate initial data if empty
+    # Start scheduler
     scheduler.start()
+    
+    # Trigger scan immediately on startup to populate watchlist/signals cache
+    from fastapi.concurrency import run_in_threadpool
+    import asyncio
+    asyncio.create_task(run_in_threadpool(sc.scan_all_markets))
+    
     yield
     # Shutdown: stop scheduler
     print("Shutting down background scheduler...")
