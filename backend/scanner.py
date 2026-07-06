@@ -168,6 +168,8 @@ def scan_all_markets():
             w_high, w_low = get_weekly_high_low(symbol)
             if w_high is None or w_low is None:
                 continue
+            
+            time.sleep(0.3) # Tiny sleep between 1W and 1H requests to prevent bursts
                 
             # 3. Fetch 1H candles
             df = fetch_candles(symbol, "1h", limit=100)
@@ -286,12 +288,12 @@ def scan_all_markets():
                     save_local_watchlist(local_watchlist)
             
             scanned_count += 1
-            time.sleep(0.5) # Delay to respect Bybit rate limit
+            time.sleep(1.0) # Delay to respect Bybit rate limit
             
         except Exception as e:
             errors_count += 1
             print(f"Error scanning {symbol}: {e}")
-            time.sleep(0.5) # Sleep on error too to prevent spamming
+            time.sleep(1.0) # Sleep on error too to prevent spamming
             
     execution_time = time.time() - start_time
     
