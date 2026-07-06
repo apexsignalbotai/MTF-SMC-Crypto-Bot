@@ -1,0 +1,29 @@
+# Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Database and State
+watchlist_state.json
+
+# Node/React
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
