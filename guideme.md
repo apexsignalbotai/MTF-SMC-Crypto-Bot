@@ -45,6 +45,32 @@ CREATE OR REPLACE TRIGGER trigger_clean_old_signals
 AFTER INSERT ON public.signals
 FOR EACH STATEMENT
 EXECUTE FUNCTION clean_old_signals_history();
+
+-- 4. Create System Audit Logs Table
+CREATE TABLE IF NOT EXISTS public.system_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    status TEXT NOT NULL CHECK (status IN ('SUCCESS', 'ERROR')),
+    message TEXT NOT NULL,
+    execution_time NUMERIC, -- in seconds
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_logs_created_at ON public.system_logs(created_at);
+
+-- 5. Create automatic logs cleanup trigger (keeps logs for 14 days)
+CREATE OR REPLACE FUNCTION clean_old_logs() 
+RETURNS trigger AS $$
+BEGIN
+    DELETE FROM public.system_logs
+    WHERE created_at < now() - interval '14 days';
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trigger_clean_old_logs
+AFTER INSERT ON public.system_logs
+FOR EACH STATEMENT
+EXECUTE FUNCTION clean_old_logs();
 ```
 
 ---

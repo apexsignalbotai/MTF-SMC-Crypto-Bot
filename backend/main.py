@@ -86,6 +86,11 @@ def get_signals_stats():
         "net_pnl_r": round(net_r, 2)
     }
 
+@app.get("/api/logs")
+def get_system_logs(limit: int = 50):
+    """Endpoint for frontend to retrieve recent system audit logs."""
+    return db.get_system_logs(limit)
+
 @app.post("/api/scan")
 def trigger_manual_scan(background_tasks: BackgroundTasks):
     """Endpoint to manually trigger a market scan (for manual testing/UI refresh)."""

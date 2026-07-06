@@ -3,6 +3,7 @@ import json
 import ccxt
 import pandas as pd
 import numpy as np
+import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
@@ -11,12 +12,63 @@ import telegram_bot as tg
 
 load_dotenv()
 
-# Predefined top liquid pairs on major exchanges
-WATCHED_SYMBOLS = [
-    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "ADA/USDT",
-    "XRP/USDT", "DOT/USDT", "LINK/USDT", "DOGE/USDT", "AVAX/USDT",
-    "POL/USDT", "LTC/USDT", "UNI/USDT", "NEAR/USDT", "ATOM/USDT"
-]
+WATCHLIST_FILE = "watchlist_state.json"
+SYMBOLS_CACHE_FILE = "watched_symbols_cache.json"
+
+def get_watched_symbols():
+    """Retrieve symbols to scan, dynamically updating the top 25 volume pairs on Bybit on Mondays."""
+    now = datetime.now(timezone.utc)
+    
+    # Load cached symbols if exists
+    if os.path.exists(SYMBOLS_CACHE_FILE):
+        try:
+            with open(SYMBOLS_CACHE_FILE, 'r') as f:
+                cache = json.load(f)
+            cache_time = datetime.fromisoformat(cache["updated_at"])
+            days_old = (now - cache_time).days
+            # Monday is weekday() == 0. If not Monday, or it's same week, reuse cache
+            if days_old < 7 and (now.weekday() != 0 or cache_time.weekday() == 0):
+                return cache["symbols"]
+        except Exception as e:
+            print(f"Error reading symbols cache, refetching: {e}")
+            
+    # Refetch from exchange
+    print("Fetching top 25 USDT swap pairs by 24h volume from Bybit...")
+    try:
+        exchange.load_markets()
+        tickers = exchange.fetch_tickers()
+        
+        usdt_swaps = []
+        for symbol, ticker in tickers.items():
+            # Filter for USDT linear swaps, e.g. "BTC/USDT" or "BTC/USDT:USDT"
+            # quoteVolume represents volume in USDT
+            if ("/USDT" in symbol) and ticker.get("quoteVolume"):
+                usdt_swaps.append({
+                    "symbol": symbol,
+                    "volume": float(ticker["quoteVolume"])
+                })
+                
+        # Sort by volume descending
+        usdt_swaps.sort(key=lambda x: x["volume"], reverse=True)
+        top_symbols = [item["symbol"] for item in usdt_swaps[:25]]
+        
+        # Fallback if empty
+        if not top_symbols:
+            top_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "LINK/USDT"]
+            
+        # Cache results
+        cache_data = {
+            "updated_at": now.isoformat(),
+            "symbols": top_symbols
+        }
+        with open(SYMBOLS_CACHE_FILE, 'w') as f:
+            json.dump(cache_data, f, indent=4)
+            
+        return top_symbols
+    except Exception as e:
+        print(f"Failed to fetch dynamic symbols: {e}")
+        # Default fallback
+        return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "ADA/USDT", "XRP/USDT", "DOT/USDT", "LINK/USDT", "DOGE/USDT", "AVAX/USDT", "POL/USDT", "LTC/USDT", "UNI/USDT", "NEAR/USDT", "ATOM/USDT"]
 
 WATCHLIST_FILE = "watchlist_state.json"
 
@@ -96,10 +148,15 @@ def find_swings(df: pd.DataFrame, window: int = 2):
 
 def scan_all_markets():
     """Main scan function executed every hour."""
+    start_time = time.time()
     print(f"[{datetime.now().isoformat()}] Starting hourly market scan...")
     local_watchlist = load_local_watchlist()
     
-    for symbol in WATCHED_SYMBOLS:
+    symbols_to_scan = get_watched_symbols()
+    scanned_count = 0
+    errors_count = 0
+    
+    for symbol in symbols_to_scan:
         try:
             # 1. Prevent duplicate signals if pair has an active/pending trade in DB
             db_signal = db.get_signal_by_pair(symbol)
@@ -181,16 +238,12 @@ def scan_all_markets():
                 leg_end = float(last_candle["high"] if close_price > recent_swing_high else last_candle["low"])
                 
                 # Bullish setup (CHOCH or BOS)
-                # CHOCH is a reversal: price swept weekly low, then broke recent 1H swing high to the upside
-                # BOS is a continuation: price broke weekly high, then continued breaking recent 1H swing highs
                 if close_price > recent_swing_high:
                     signal_direction = "BUY"
                     setup_type = "CHOCH" if "LOW" in trigger_type else "BOS"
                     leg_start = float(swing_low_rows.iloc[-1]["swing_low"])
                     
                 # Bearish setup
-                # CHOCH is reversal: price swept weekly high, then broke recent 1H swing low to the downside
-                # BOS is continuation: price broke weekly low, then continued breaking recent 1H swing lows
                 elif close_price < recent_swing_low:
                     signal_direction = "SELL"
                     setup_type = "CHOCH" if "HIGH" in trigger_type else "BOS"
@@ -231,9 +284,28 @@ def scan_all_markets():
                     # Remove from watchlist once signal is generated
                     del local_watchlist[symbol]
                     save_local_watchlist(local_watchlist)
-                    
+            
+            scanned_count += 1
+            
         except Exception as e:
+            errors_count += 1
             print(f"Error scanning {symbol}: {e}")
+            
+    execution_time = time.time() - start_time
+    
+    # Write audit log to database
+    if errors_count == 0:
+        db.create_system_log(
+            status="SUCCESS",
+            message=f"Scan completed successfully. Scanned {scanned_count} symbols.",
+            execution_time=round(execution_time, 2)
+        )
+    else:
+        db.create_system_log(
+            status="ERROR",
+            message=f"Scan completed with {errors_count} errors. Scanned {scanned_count} symbols.",
+            execution_time=round(execution_time, 2)
+        )
 
 def update_live_trades():
     """Check active and pending signals to see if they hit Entry, SL, or TP."""

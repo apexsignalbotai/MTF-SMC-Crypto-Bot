@@ -122,3 +122,37 @@ def get_monthly_history():
     except Exception as e:
         print(f"Error fetching closed history: {e}")
         return []
+
+def create_system_log(status: str, message: str, execution_time: float = None):
+    """Write an audit scan log to Supabase system_logs table."""
+    if not supabase_client:
+        return None
+    try:
+        data = {
+            "status": status,
+            "message": message,
+            "execution_time": execution_time,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        response = supabase_client.table("system_logs").insert(data).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Error creating system log: {e}")
+        return None
+
+def get_system_logs(limit: int = 50):
+    """Fetch recent execution audit logs."""
+    if not supabase_client:
+        return []
+    try:
+        response = supabase_client.table("system_logs")\
+            .select("*")\
+            .order("created_at", desc=True)\
+            .limit(limit)\
+            .execute()
+        return response.data
+    except Exception as e:
+        print(f"Error fetching system logs: {e}")
+        return []
