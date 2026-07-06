@@ -229,6 +229,8 @@ def scan_all_markets():
                 
             recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
             recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
+            swing_high_idx = swing_high_rows.index[-1]
+            swing_low_idx = swing_low_rows.index[-1]
             
             signal_direction = None
             setup_type = None
@@ -236,14 +238,15 @@ def scan_all_markets():
             leg_end = float(last_candle["high"] if close_price > recent_swing_high else last_candle["low"])
             
             # Bullish break (close above recent swing high)
-            # The close must be after the trigger event
-            if close_price > recent_swing_high and (len(df) - 2) >= trigger_index:
+            # The swing high must be formed AFTER the weekly trigger event
+            if close_price > recent_swing_high and swing_high_idx > trigger_index:
                 signal_direction = "BUY"
                 setup_type = "CHOCH" if trigger_type == "LOW" else "BOS"
                 leg_start = float(swing_low_rows.iloc[-1]["swing_low"])
                 
             # Bearish break (close below recent swing low)
-            elif close_price < recent_swing_low and (len(df) - 2) >= trigger_index:
+            # The swing low must be formed AFTER the weekly trigger event
+            elif close_price < recent_swing_low and swing_low_idx > trigger_index:
                 signal_direction = "SELL"
                 setup_type = "CHOCH" if trigger_type == "HIGH" else "BOS"
                 leg_start = float(swing_high_rows.iloc[-1]["swing_high"])
