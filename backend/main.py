@@ -52,6 +52,11 @@ def get_active_signals():
     """Endpoint for frontend to retrieve active and pending signal cards."""
     return db.get_active_signals()
 
+@app.get("/api/watchlist")
+def get_watchlist():
+    """Endpoint for frontend to retrieve symbols currently monitored for setups."""
+    return sc.get_current_watchlist()
+
 @app.get("/api/signals/history")
 def get_signals_history():
     """Endpoint for frontend to retrieve past closed trades."""

@@ -72,6 +72,8 @@ def get_watched_symbols():
 
 WATCHLIST_FILE = "watchlist_state.json"
 
+LATEST_WATCHLIST = []
+
 # Initialize CCXT exchange client
 exchange = ccxt.bybit({
     'enableRateLimit': True,
@@ -154,6 +156,7 @@ def scan_all_markets():
     symbols_to_scan = get_watched_symbols()
     scanned_count = 0
     errors_count = 0
+    current_watchlist = []
     
     for symbol in symbols_to_scan:
         try:
@@ -198,6 +201,14 @@ def scan_all_markets():
                 scanned_count += 1
                 time.sleep(1.0)
                 continue
+                
+            # Add to dynamic cached watchlist
+            current_watchlist.append({
+                "pair": symbol,
+                "trigger": trigger_type,
+                "level": w_high if trigger_type == "HIGH" else w_low,
+                "time": df.iloc[trigger_index]["datetime"].isoformat()
+            })
                 
             # 4. Check if the last completed candle (index -2) triggered a BOS or CHOCH
             # Swing points must be calculated from historical data
@@ -275,6 +286,10 @@ def scan_all_markets():
             time.sleep(1.0)
             
     execution_time = time.time() - start_time
+    
+    # Save to global cache variable for API endpoints
+    global LATEST_WATCHLIST
+    LATEST_WATCHLIST = current_watchlist
     
     # Write audit log to database
     if errors_count == 0:
@@ -364,3 +379,8 @@ def update_live_trades():
                         
         except Exception as e:
             print(f"Error updating active trade for {symbol}: {e}")
+
+def get_current_watchlist():
+    """Retrieve the cached watchlist collected in the last scan."""
+    global LATEST_WATCHLIST
+    return LATEST_WATCHLIST
