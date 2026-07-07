@@ -243,13 +243,13 @@ def scan_all_markets():
                         signal_direction = "SELL"
                         setup_type = "CHOCH"
                         leg_start = breakout_peak
-                        leg_end = float(last_candle["low"])
+                        leg_end = close_price
                 
                 # Bullish BOS (Continuation): price closes above breakout_peak
                 if close_price > breakout_peak:
                     signal_direction = "BUY"
                     setup_type = "BOS"
-                    leg_end = float(last_candle["high"])
+                    leg_end = close_price
                     # leg_start is the lowest low (retracement) between the peak and the breakout candle
                     retracement_df = df.iloc[peak_idx:len(df)-1]
                     leg_start = float(retracement_df["low"].min())
@@ -271,13 +271,13 @@ def scan_all_markets():
                         signal_direction = "BUY"
                         setup_type = "CHOCH"
                         leg_start = breakout_valley
-                        leg_end = float(last_candle["high"])
+                        leg_end = close_price
                 
                 # Bearish BOS (Continuation): price closes below breakout_valley
                 if close_price < breakout_valley:
                     signal_direction = "SELL"
                     setup_type = "BOS"
-                    leg_end = float(last_candle["low"])
+                    leg_end = close_price
                     # leg_start is the highest high (retracement) between the valley and the breakout candle
                     retracement_df = df.iloc[valley_idx:len(df)-1]
                     leg_start = float(retracement_df["high"].max())
