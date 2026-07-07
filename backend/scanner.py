@@ -247,7 +247,9 @@ def scan_all_markets():
                     if close_price < recent_swing_low:
                         signal_direction = "SELL"
                         setup_type = "CHOCH"
-                        leg_start = breakout_peak
+                        # leg_start is the most recent confirmed swing high before breakdown
+                        swing_high_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_high"])
+                        leg_start = float(swing_high_rows_all.iloc[-1]["swing_high"]) if len(swing_high_rows_all) > 0 else breakout_peak
                         leg_end = float(last_candle["low"])
                 
                 # Bullish BOS (Continuation): price closes above breakout_peak
@@ -275,7 +277,9 @@ def scan_all_markets():
                     if close_price > recent_swing_high:
                         signal_direction = "BUY"
                         setup_type = "CHOCH"
-                        leg_start = breakout_valley
+                        # leg_start is the most recent confirmed swing low before breakout
+                        swing_low_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_low"])
+                        leg_start = float(swing_low_rows_all.iloc[-1]["swing_low"]) if len(swing_low_rows_all) > 0 else breakout_valley
                         leg_end = float(last_candle["high"])
                 
                 # Bearish BOS (Continuation): price closes below breakout_valley
