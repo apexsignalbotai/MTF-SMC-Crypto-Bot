@@ -218,52 +218,81 @@ def scan_all_markets():
             last_candle = df.iloc[-2]
             close_price = float(last_candle["close"])
             
-            # Get swing points up to index -2
-            swing_high_rows = df_swings.iloc[:len(df)-1].dropna(subset=["swing_high"])
-            swing_low_rows = df_swings.iloc[:len(df)-1].dropna(subset=["swing_low"])
-            
-            if len(swing_high_rows) == 0 or len(swing_low_rows) == 0:
-                scanned_count += 1
-                time.sleep(1.0)
-                continue
-                
-            recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
-            recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
-            swing_high_idx = swing_high_rows.index[-1]
-            swing_low_idx = swing_low_rows.index[-1]
-            
             signal_direction = None
             setup_type = None
             leg_start = None
-            leg_end = float(last_candle["high"] if close_price > recent_swing_high else last_candle["low"])
+            leg_end = None
             
-            # Bullish break (close above recent swing high)
-            # The swing high must be formed AFTER the weekly trigger event
-            if close_price > recent_swing_high and swing_high_idx > trigger_index:
-                signal_direction = "BUY"
-                setup_type = "CHOCH" if trigger_type == "LOW" else "BOS"
-                leg_start = float(swing_low_rows.iloc[-1]["swing_low"])
+            if trigger_type == "HIGH":
+                # Find the breakout peak (highest high) since the weekly high breakout trigger
+                # We search from trigger_index to len(df)-2 (completed candles)
+                sub_df = df.iloc[trigger_index:len(df)-1]
+                breakout_peak = float(sub_df["high"].max())
+                peak_idx = sub_df["high"].idxmax()
                 
-            # Bearish break (close below recent swing low)
-            # The swing low must be formed AFTER the weekly trigger event
-            elif close_price < recent_swing_low and swing_low_idx > trigger_index:
-                signal_direction = "SELL"
-                setup_type = "CHOCH" if trigger_type == "HIGH" else "BOS"
-                leg_start = float(swing_high_rows.iloc[-1]["swing_high"])
+                # Find the most recent confirmed swing low BEFORE or AT peak_idx
+                swing_low_rows = df_swings.loc[:peak_idx].dropna(subset=["swing_low"])
                 
-            if signal_direction and leg_start and leg_end:
+                if len(swing_low_rows) > 0:
+                    recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
+                    
+                    # Bearish CHOCH (Reversal): price closes below recent swing low
+                    if close_price < recent_swing_low:
+                        signal_direction = "SELL"
+                        setup_type = "CHOCH"
+                        leg_start = breakout_peak
+                        leg_end = float(last_candle["low"])
+                
+                # Bullish BOS (Continuation): price closes above breakout_peak
+                if close_price > breakout_peak:
+                    signal_direction = "BUY"
+                    setup_type = "BOS"
+                    leg_end = float(last_candle["high"])
+                    # leg_start is the lowest low (retracement) between the peak and the breakout candle
+                    retracement_df = df.iloc[peak_idx:len(df)-1]
+                    leg_start = float(retracement_df["low"].min())
+                    
+            elif trigger_type == "LOW":
+                # Find the breakout valley (lowest low) since the weekly low breakout trigger
+                sub_df = df.iloc[trigger_index:len(df)-1]
+                breakout_valley = float(sub_df["low"].min())
+                valley_idx = sub_df["low"].idxmin()
+                
+                # Find the most recent confirmed swing high BEFORE or AT valley_idx
+                swing_high_rows = df_swings.loc[:valley_idx].dropna(subset=["swing_high"])
+                
+                if len(swing_high_rows) > 0:
+                    recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
+                    
+                    # Bullish CHOCH (Reversal): price closes above recent swing high
+                    if close_price > recent_swing_high:
+                        signal_direction = "BUY"
+                        setup_type = "CHOCH"
+                        leg_start = breakout_valley
+                        leg_end = float(last_candle["high"])
+                
+                # Bearish BOS (Continuation): price closes below breakout_valley
+                if close_price < breakout_valley:
+                    signal_direction = "SELL"
+                    setup_type = "BOS"
+                    leg_end = float(last_candle["low"])
+                    # leg_start is the highest high (retracement) between the valley and the breakout candle
+                    retracement_df = df.iloc[valley_idx:len(df)-1]
+                    leg_start = float(retracement_df["high"].max())
+
+            if signal_direction and leg_start is not None and leg_end is not None:
                 fib_range = abs(leg_end - leg_start)
                 
                 if signal_direction == "BUY":
-                    # Entry at 0.5 Fib, SL at 0.85 Fib
+                    # Entry at 0.5 Fib, SL at 0.89 Fib (as requested by user)
                     entry_price = leg_end - (0.5 * fib_range)
-                    sl_price = leg_end - (0.85 * fib_range)
+                    sl_price = leg_end - (0.89 * fib_range)
                     risk = entry_price - sl_price
                     tp_price = entry_price + (2 * risk) # 1:2 R:R
                 else:
-                    # Entry at 0.5 Fib, SL at 0.85 Fib
+                    # Entry at 0.5 Fib, SL at 0.89 Fib
                     entry_price = leg_end + (0.5 * fib_range)
-                    sl_price = leg_end + (0.85 * fib_range)
+                    sl_price = leg_end + (0.89 * fib_range)
                     risk = sl_price - entry_price
                     tp_price = entry_price - (2 * risk) # 1:2 R:R
                     
