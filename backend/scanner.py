@@ -232,8 +232,8 @@ def scan_all_markets():
                 breakout_peak = float(sub_df["high"].max())
                 peak_idx = sub_df["high"].idxmax()
                 
-                # Find the most recent confirmed swing low BEFORE or AT peak_idx
-                swing_low_rows = df_swings.loc[:peak_idx].dropna(subset=["swing_low"])
+                # Find the most recent confirmed swing low BEFORE or AT the weekly breakout trigger
+                swing_low_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_low"])
                 
                 if len(swing_low_rows) > 0:
                     recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
@@ -260,8 +260,8 @@ def scan_all_markets():
                 breakout_valley = float(sub_df["low"].min())
                 valley_idx = sub_df["low"].idxmin()
                 
-                # Find the most recent confirmed swing high BEFORE or AT valley_idx
-                swing_high_rows = df_swings.loc[:valley_idx].dropna(subset=["swing_high"])
+                # Find the most recent confirmed swing high BEFORE or AT the weekly breakout trigger
+                swing_high_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_high"])
                 
                 if len(swing_high_rows) > 0:
                     recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
