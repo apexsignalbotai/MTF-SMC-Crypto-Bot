@@ -110,13 +110,14 @@ def fetch_candles(symbol: str, timeframe: str, limit: int = 100):
         return None
 
 def get_weekly_high_low(symbol: str):
-    """Get high and low of the previous weekly closed candle."""
+    """Get high and low of the previous weekly closed candle, and the start timestamp of the current week."""
     df = fetch_candles(symbol, "1w", limit=3)
     if df is None or len(df) < 2:
-        return None, None
+        return None, None, None
     # Last candle (index -1) is current open week, second to last (index -2) is previous closed week
     prev_week = df.iloc[-2]
-    return float(prev_week["high"]), float(prev_week["low"])
+    current_week_start = df.iloc[-1]["datetime"]
+    return float(prev_week["high"]), float(prev_week["low"]), current_week_start
 
 def find_swings(df: pd.DataFrame, window: int = 2):
     """
@@ -160,15 +161,19 @@ def scan_all_markets():
     
     for symbol in symbols_to_scan:
         try:
-            # 1. Prevent duplicate signals if pair has an active/pending trade in DB
+            # 2. Get Weekly High/Low and current week start
+            w_high, w_low, current_week_start = get_weekly_high_low(symbol)
+            if w_high is None or w_low is None or current_week_start is None:
+                continue
+                
+            # 1. Prevent duplicate active/pending signals, or any signal generated since the start of this week
             db_signal = db.get_signal_by_pair(symbol)
             if db_signal:
                 print(f"Skipping {symbol}: Active/Pending signal already exists in Database.")
                 continue
-            
-            # 2. Get Weekly High/Low
-            w_high, w_low = get_weekly_high_low(symbol)
-            if w_high is None or w_low is None:
+                
+            if db.has_signal_since(symbol, current_week_start):
+                print(f"Skipping {symbol}: A signal was already generated this week for the current weekly candle.")
                 continue
                 
             time.sleep(0.3) # Sleep to respect Bybit rate limit

@@ -156,3 +156,18 @@ def get_system_logs(limit: int = 50):
     except Exception as e:
         print(f"Error fetching system logs: {e}")
         return []
+
+def has_signal_since(pair: str, timestamp):
+    """Check if there is any signal for a pair created since the given timestamp."""
+    if not supabase_client:
+        return False
+    try:
+        response = supabase_client.table("signals")\
+            .select("id")\
+            .eq("pair", pair)\
+            .gte("created_at", timestamp.isoformat())\
+            .execute()
+        return len(response.data) > 0
+    except Exception as e:
+        print(f"Error checking signals since timestamp: {e}")
+        return False
