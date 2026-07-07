@@ -251,15 +251,13 @@ def scan_all_markets():
                         swing_high_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_high"])
                         leg_start = float(swing_high_rows_all.iloc[-1]["swing_high"]) if len(swing_high_rows_all) > 0 else breakout_peak
                         leg_end = float(last_candle["low"])
-                
-                # Bullish BOS (Continuation): price closes above breakout_peak
-                if close_price > breakout_peak:
-                    signal_direction = "BUY"
-                    setup_type = "BOS"
-                    leg_end = float(last_candle["high"])
-                    # leg_start is the lowest low (retracement) between the peak and the breakout candle
-                    retracement_df = df.iloc[peak_idx:len(df)-1]
-                    leg_start = float(retracement_df["low"].min())
+                    else:
+                        # Bullish BOS / Breakout Retracement (BUY):
+                        # Drawn from last valley swing low (recent_swing_low) to new breakout peak
+                        signal_direction = "BUY"
+                        setup_type = "BOS"
+                        leg_start = recent_swing_low
+                        leg_end = breakout_peak
                     
             elif trigger_type == "LOW":
                 # Find the breakout valley (lowest low) since the weekly low breakout trigger
@@ -281,15 +279,13 @@ def scan_all_markets():
                         swing_low_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_low"])
                         leg_start = float(swing_low_rows_all.iloc[-1]["swing_low"]) if len(swing_low_rows_all) > 0 else breakout_valley
                         leg_end = float(last_candle["high"])
-                
-                # Bearish BOS (Continuation): price closes below breakout_valley
-                if close_price < breakout_valley:
-                    signal_direction = "SELL"
-                    setup_type = "BOS"
-                    leg_end = float(last_candle["low"])
-                    # leg_start is the highest high (retracement) between the valley and the breakout candle
-                    retracement_df = df.iloc[valley_idx:len(df)-1]
-                    leg_start = float(retracement_df["high"].max())
+                    else:
+                        # Bearish BOS / Breakout Retracement (SELL):
+                        # Drawn from last peak swing high (recent_swing_high) to new breakout valley
+                        signal_direction = "SELL"
+                        setup_type = "BOS"
+                        leg_start = recent_swing_high
+                        leg_end = breakout_valley
 
             if signal_direction and leg_start is not None and leg_end is not None:
                 fib_range = abs(leg_end - leg_start)
