@@ -43,7 +43,11 @@ def get_watched_symbols():
             days_old = (now - cache_time).days
             # Monday is weekday() == 0. If not Monday, or it's same week, reuse cache
             if days_old < 7 and (now.weekday() != 0 or cache_time.weekday() == 0):
-                return cache["symbols"]
+                symbols = cache["symbols"]
+                for forex_sym in FOREX_OVERRIDE_LIST:
+                    if forex_sym not in symbols:
+                        symbols.append(forex_sym)
+                return symbols
         except Exception as e:
             print(f"Error reading symbols cache, refetching: {e}")
             
@@ -105,6 +109,11 @@ exchange = ccxt.bybit({
     'options': {'defaultType': 'swap'} # Bybit swaps/futures have high liquidity and no aggressive shared IP bans
 })
 
+# Initialize Binance exchange client for forex stablecoin perps fallback
+binance_exchange = ccxt.binance({
+    'enableRateLimit': True
+})
+
 def load_local_watchlist():
     """Load local watchlist of pairs currently being monitored for SMC setups."""
     if os.path.exists(WATCHLIST_FILE):
@@ -124,9 +133,14 @@ def save_local_watchlist(watchlist):
         print(f"Error saving local watchlist: {e}")
 
 def fetch_candles(symbol: str, timeframe: str, limit: int = 100):
-    """Fetch candles from exchange."""
+    """Fetch candles from exchange, falling back to Binance for EUR/GBP stablecoin pairs."""
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
+            binance_symbol = symbol.split(":")[0] # Translate EUR/USDT:USDT -> EUR/USDT
+            ohlcv = binance_exchange.fetch_ohlcv(binance_symbol, timeframe, limit=limit)
+        else:
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            
         df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         return df
