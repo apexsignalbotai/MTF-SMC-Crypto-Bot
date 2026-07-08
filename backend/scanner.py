@@ -422,7 +422,11 @@ def update_live_trades():
         symbol = signal["pair"]
         try:
             # Fetch current ticker price
-            ticker = exchange.fetch_ticker(symbol)
+            if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
+                binance_symbol = symbol.split(":")[0]
+                ticker = binance_exchange.fetch_ticker(binance_symbol)
+            else:
+                ticker = exchange.fetch_ticker(symbol)
             current_price = float(ticker["last"])
             
             entry = float(signal["entry_price"])

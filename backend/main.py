@@ -60,8 +60,10 @@ def get_current_price(symbol: str):
         else:
             ticker = sc.exchange.fetch_ticker(symbol)
             price = float(ticker["last"])
+        print(f"DEBUG PRICE API: {symbol} -> {price}")
         return {"price": price}
     except Exception as e:
+        print(f"DEBUG PRICE API ERROR: {symbol} -> {e}")
         return {"price": None, "error": str(e)}
 
 def classify_item(item):
