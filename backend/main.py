@@ -49,9 +49,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/api/health")
-def health_check():
-    return {"status": "healthy", "scheduler_running": scheduler.running}
+@app.get("/api/price")
+def get_current_price(symbol: str):
+    """Retrieve the current ticker price for a given symbol, falling back to Binance for EUR/GBP."""
+    try:
+        if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
+            binance_symbol = symbol.split(":")[0]
+            ticker = sc.binance_exchange.fetch_ticker(binance_symbol)
+            price = float(ticker["last"])
+        else:
+            ticker = sc.exchange.fetch_ticker(symbol)
+            price = float(ticker["last"])
+        return {"price": price}
+    except Exception as e:
+        return {"price": None, "error": str(e)}
 
 def classify_item(item):
     pair = item.get("pair", "")
