@@ -49,6 +49,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/api/health")
+def health_check():
+    return {"status": "healthy", "scheduler_running": scheduler.running}
+
 @app.get("/api/price")
 def get_current_price(symbol: str):
     """Retrieve the current ticker price for a given symbol, falling back to Binance for EUR/GBP."""
