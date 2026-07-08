@@ -390,10 +390,13 @@ def update_live_trades():
                     time.sleep(0.3) # Respect API rate limits
                     
                     if df_15 is not None and len(df_15) >= 5:
-                        df_swings_15 = find_swings(df_15, window=2)
+                        # Exclude the current live open candle (index -1) when calculating swings
+                        # to ensure swing points are confirmed ONLY by completed 15m candles
+                        df_15_completed = df_15.iloc[:-1].copy()
+                        df_swings_15 = find_swings(df_15_completed, window=2)
                         
                         if direction == "BUY":
-                            swing_high_rows = df_swings_15.iloc[:-1].dropna(subset=["swing_high"])
+                            swing_high_rows = df_swings_15.dropna(subset=["swing_high"])
                             if len(swing_high_rows) > 0:
                                 recent_15m_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
                                 last_15m_candle = df_15.iloc[-2]
@@ -401,7 +404,7 @@ def update_live_trades():
                                 if float(last_15m_candle["close"]) > recent_15m_swing_high:
                                     is_triggered = True
                         else: # SELL
-                            swing_low_rows = df_swings_15.iloc[:-1].dropna(subset=["swing_low"])
+                            swing_low_rows = df_swings_15.dropna(subset=["swing_low"])
                             if len(swing_low_rows) > 0:
                                 recent_15m_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
                                 last_15m_candle = df_15.iloc[-2]
