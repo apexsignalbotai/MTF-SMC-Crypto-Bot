@@ -15,6 +15,21 @@ load_dotenv()
 WATCHLIST_FILE = "watchlist_state.json"
 SYMBOLS_CACHE_FILE = "watched_symbols_cache.json"
 
+FOREX_OVERRIDE_LIST = [
+    "EUR/USDT:USDT",
+    "GBP/USDT:USDT",
+    "XAU/USDT:USDT",
+    "CL/USDT:USDT"
+]
+
+def get_market_category(symbol: str) -> str:
+    symbol_upper = symbol.upper()
+    forex_keywords = ["EUR/", "GBP/", "AUD/", "CAD/", "JPY/", "CHF/", "XAU/", "CL/"]
+    for kw in forex_keywords:
+        if kw in symbol_upper:
+            return "FOREX"
+    return "CRYPTO"
+
 def get_watched_symbols():
     """Retrieve symbols to scan, dynamically updating the top 25 volume pairs on Bybit on Mondays."""
     now = datetime.now(timezone.utc)
@@ -43,6 +58,9 @@ def get_watched_symbols():
             # Filter for USDT linear swaps, e.g. "BTC/USDT" or "BTC/USDT:USDT"
             # quoteVolume represents volume in USDT
             if ("/USDT" in symbol) and ticker.get("quoteVolume"):
+                # Exclude Forex/Commodity overrides from crypto volume sort list
+                if get_market_category(symbol) == "FOREX":
+                    continue
                 usdt_swaps.append({
                     "symbol": symbol,
                     "volume": float(ticker["quoteVolume"])
@@ -56,6 +74,11 @@ def get_watched_symbols():
         if not top_symbols:
             top_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "LINK/USDT"]
             
+        # Merge with Forex Override List
+        for forex_sym in FOREX_OVERRIDE_LIST:
+            if forex_sym not in top_symbols:
+                top_symbols.append(forex_sym)
+                
         # Cache results
         cache_data = {
             "updated_at": now.isoformat(),
@@ -68,9 +91,11 @@ def get_watched_symbols():
     except Exception as e:
         print(f"Failed to fetch dynamic symbols: {e}")
         # Default fallback
-        return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "ADA/USDT", "XRP/USDT", "DOT/USDT", "LINK/USDT", "DOGE/USDT", "AVAX/USDT", "POL/USDT", "LTC/USDT", "UNI/USDT", "NEAR/USDT", "ATOM/USDT"]
-
-WATCHLIST_FILE = "watchlist_state.json"
+        fallback = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+        for forex_sym in FOREX_OVERRIDE_LIST:
+            if forex_sym not in fallback:
+                fallback.append(forex_sym)
+        return fallback
 
 LATEST_WATCHLIST = []
 
@@ -148,6 +173,71 @@ def find_swings(df: pd.DataFrame, window: int = 2):
             df.at[df.index[i], "swing_low"] = df.iloc[i]["low"]
             
     return df
+
+def analyze_crypto_market(df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price):
+    """
+    Crypto-specific strategy analysis.
+    Rule: 1H breakout retracement / CHOCH.
+    """
+    signal_direction = None
+    setup_type = None
+    leg_start = None
+    leg_end = None
+    
+    if trigger_type == "HIGH":
+        # Find the most recent confirmed swing low BEFORE or AT the weekly breakout trigger
+        swing_low_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_low"])
+        
+        if len(swing_low_rows) > 0:
+            recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
+            
+            # Bearish CHOCH (Reversal): price closes below recent swing low
+            if close_price < recent_swing_low:
+                signal_direction = "SELL"
+                setup_type = "CHOCH"
+                # leg_start is the most recent confirmed swing high before breakdown
+                swing_high_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_high"])
+                leg_start = float(swing_high_rows_all.iloc[-1]["swing_high"]) if len(swing_high_rows_all) > 0 else breakout_peak
+                leg_end = float(last_candle["low"])
+            else:
+                # Bullish BOS / Breakout Retracement (BUY):
+                # Drawn from last valley swing low (recent_swing_low) to new breakout peak
+                signal_direction = "BUY"
+                setup_type = "BOS"
+                leg_start = recent_swing_low
+                leg_end = breakout_peak
+                
+    elif trigger_type == "LOW":
+        # Find the most recent confirmed swing high BEFORE or AT the weekly breakout trigger
+        swing_high_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_high"])
+        
+        if len(swing_high_rows) > 0:
+            recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
+            
+            # Bullish CHOCH (Reversal): price closes above recent swing high
+            if close_price > recent_swing_high:
+                signal_direction = "BUY"
+                setup_type = "CHOCH"
+                # leg_start is the most recent confirmed swing low before breakout
+                swing_low_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_low"])
+                leg_start = float(swing_low_rows_all.iloc[-1]["swing_low"]) if len(swing_low_rows_all) > 0 else breakout_valley
+                leg_end = float(last_candle["high"])
+            else:
+                # Bearish BOS / Breakout Retracement (SELL):
+                # Drawn from last peak swing high (recent_swing_high) to new breakout valley
+                signal_direction = "SELL"
+                setup_type = "BOS"
+                leg_start = recent_swing_high
+                leg_end = breakout_valley
+                
+    return signal_direction, setup_type, leg_start, leg_end
+
+def analyze_forex_market(df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price):
+    """
+    Forex/Commodity-specific strategy analysis.
+    Kept completely separate so it can be tweaked independently in the future.
+    """
+    return analyze_crypto_market(df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price)
 
 def scan_all_markets():
     """Main scan function executed every hour (completely stateless)."""
@@ -230,62 +320,20 @@ def scan_all_markets():
             leg_start = None
             leg_end = None
             
-            if trigger_type == "HIGH":
-                # Find the breakout peak (highest high) since the weekly high breakout trigger
-                # We search from trigger_index to len(df)-2 (completed candles)
-                sub_df = df.iloc[trigger_index:len(df)-1]
-                breakout_peak = float(sub_df["high"].max())
-                peak_idx = sub_df["high"].idxmax()
-                
-                # Find the most recent confirmed swing low BEFORE or AT the weekly breakout trigger
-                swing_low_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_low"])
-                
-                if len(swing_low_rows) > 0:
-                    recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
-                    
-                    # Bearish CHOCH (Reversal): price closes below recent swing low
-                    if close_price < recent_swing_low:
-                        signal_direction = "SELL"
-                        setup_type = "CHOCH"
-                        # leg_start is the most recent confirmed swing high before breakdown
-                        swing_high_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_high"])
-                        leg_start = float(swing_high_rows_all.iloc[-1]["swing_high"]) if len(swing_high_rows_all) > 0 else breakout_peak
-                        leg_end = float(last_candle["low"])
-                    else:
-                        # Bullish BOS / Breakout Retracement (BUY):
-                        # Drawn from last valley swing low (recent_swing_low) to new breakout peak
-                        signal_direction = "BUY"
-                        setup_type = "BOS"
-                        leg_start = recent_swing_low
-                        leg_end = breakout_peak
-                    
-            elif trigger_type == "LOW":
-                # Find the breakout valley (lowest low) since the weekly low breakout trigger
-                sub_df = df.iloc[trigger_index:len(df)-1]
-                breakout_valley = float(sub_df["low"].min())
-                valley_idx = sub_df["low"].idxmin()
-                
-                # Find the most recent confirmed swing high BEFORE or AT the weekly breakout trigger
-                swing_high_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_high"])
-                
-                if len(swing_high_rows) > 0:
-                    recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
-                    
-                    # Bullish CHOCH (Reversal): price closes above recent swing high
-                    if close_price > recent_swing_high:
-                        signal_direction = "BUY"
-                        setup_type = "CHOCH"
-                        # leg_start is the most recent confirmed swing low before breakout
-                        swing_low_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_low"])
-                        leg_start = float(swing_low_rows_all.iloc[-1]["swing_low"]) if len(swing_low_rows_all) > 0 else breakout_valley
-                        leg_end = float(last_candle["high"])
-                    else:
-                        # Bearish BOS / Breakout Retracement (SELL):
-                        # Drawn from last peak swing high (recent_swing_high) to new breakout valley
-                        signal_direction = "SELL"
-                        setup_type = "BOS"
-                        leg_start = recent_swing_high
-                        leg_end = breakout_valley
+            # Calculate peak and valley values
+            sub_df = df.iloc[trigger_index:len(df)-1]
+            breakout_peak = float(sub_df["high"].max()) if len(sub_df) > 0 else float(last_candle["high"])
+            breakout_valley = float(sub_df["low"].min()) if len(sub_df) > 0 else float(last_candle["low"])
+
+            category = get_market_category(symbol)
+            if category == "FOREX":
+                signal_direction, setup_type, leg_start, leg_end = analyze_forex_market(
+                    df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price
+                )
+            else:
+                signal_direction, setup_type, leg_start, leg_end = analyze_crypto_market(
+                    df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price
+                )
 
             if signal_direction and leg_start is not None and leg_end is not None:
                 fib_range = abs(leg_end - leg_start)

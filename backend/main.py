@@ -53,20 +53,35 @@ app.add_middleware(
 def health_check():
     return {"status": "healthy", "scheduler_running": scheduler.running}
 
+def classify_item(item):
+    pair = item.get("pair", "")
+    pair_upper = pair.upper()
+    forex_keywords = ["EUR/", "GBP/", "AUD/", "CAD/", "JPY/", "CHF/", "XAU/", "CL/"]
+    market_category = "CRYPTO"
+    for kw in forex_keywords:
+        if kw in pair_upper:
+            market_category = "FOREX"
+            break
+    item["market_category"] = market_category
+    return item
+
 @app.get("/api/signals/active")
 def get_active_signals():
     """Endpoint for frontend to retrieve active and pending signal cards."""
-    return db.get_active_signals()
+    signals = db.get_active_signals()
+    return [classify_item(s) for s in signals]
 
 @app.get("/api/watchlist")
 def get_watchlist():
     """Endpoint for frontend to retrieve symbols currently monitored for setups."""
-    return sc.get_current_watchlist()
+    items = sc.get_current_watchlist()
+    return [classify_item(i) for i in items]
 
 @app.get("/api/signals/history")
 def get_signals_history():
     """Endpoint for frontend to retrieve past closed trades."""
-    return db.get_monthly_history()
+    history = db.get_monthly_history()
+    return [classify_item(s) for s in history]
 
 @app.get("/api/signals/stats")
 def get_signals_stats():
