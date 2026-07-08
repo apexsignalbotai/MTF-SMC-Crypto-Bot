@@ -385,22 +385,23 @@ def update_live_trades():
                     in_entry_zone = True
                     
                 if in_entry_zone:
-                    # Fetch 15m candles to look for micro-structure reversal (15m CHOCH)
-                    df_15 = fetch_candles(symbol, "15m", limit=30)
+                    # Fetch 15m candles to look for external structure reversal (15m CHOCH)
+                    df_15 = fetch_candles(symbol, "15m", limit=60)
                     time.sleep(0.3) # Respect API rate limits
                     
-                    if df_15 is not None and len(df_15) >= 5:
+                    if df_15 is not None and len(df_15) >= 15:
                         # Exclude the current live open candle (index -1) when calculating swings
                         # to ensure swing points are confirmed ONLY by completed 15m candles
                         df_15_completed = df_15.iloc[:-1].copy()
-                        df_swings_15 = find_swings(df_15_completed, window=2)
+                        # Use window=5 to target the major external structure on 15m (ignoring minor internal noise)
+                        df_swings_15 = find_swings(df_15_completed, window=5)
                         
                         if direction == "BUY":
                             swing_high_rows = df_swings_15.dropna(subset=["swing_high"])
                             if len(swing_high_rows) > 0:
                                 recent_15m_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
                                 last_15m_candle = df_15.iloc[-2]
-                                # Check if 15m candle closed above recent swing high
+                                # Check if 15m candle closed above recent major swing high
                                 if float(last_15m_candle["close"]) > recent_15m_swing_high:
                                     is_triggered = True
                         else: # SELL
@@ -408,7 +409,7 @@ def update_live_trades():
                             if len(swing_low_rows) > 0:
                                 recent_15m_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
                                 last_15m_candle = df_15.iloc[-2]
-                                # Check if 15m candle closed below recent swing low
+                                # Check if 15m candle closed below recent major swing low
                                 if float(last_15m_candle["close"]) < recent_15m_swing_low:
                                     is_triggered = True
                                     
