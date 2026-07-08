@@ -377,6 +377,10 @@ def scan_all_markets():
                 if new_signal:
                     print(f"SUCCESS STATELESS: Generated {setup_type} signal for {symbol}!")
                     tg.alert_new_signal(new_signal)
+                    db.create_system_log(
+                        status="SUCCESS",
+                        message=f"Generated {setup_type} {signal_direction} signal for {symbol} (Entry: {entry_price})."
+                    )
             
             scanned_count += 1
             time.sleep(1.0) # Delay to respect rate limit
@@ -393,16 +397,19 @@ def scan_all_markets():
     LATEST_WATCHLIST = current_watchlist
     
     # Write audit log to database
+    forex_scanned = [s.split(':')[0] for s in symbols_to_scan if get_market_category(s) == "FOREX"]
+    forex_summary = f" (Includes Forex/Commodities: {', '.join(forex_scanned)})" if forex_scanned else ""
+
     if errors_count == 0:
         db.create_system_log(
             status="SUCCESS",
-            message=f"Scan completed successfully. Scanned {scanned_count} symbols.",
+            message=f"Scan completed successfully. Scanned {scanned_count} symbols{forex_summary}.",
             execution_time=round(execution_time, 2)
         )
     else:
         db.create_system_log(
-            status="ERROR",
-            message=f"Scan completed with {errors_count} errors. Scanned {scanned_count} symbols.",
+            status="WARNING" if errors_count < 3 else "ERROR",
+            message=f"Scan completed with {errors_count} errors. Scanned {scanned_count} symbols{forex_summary}.",
             execution_time=round(execution_time, 2)
         )
 
@@ -480,6 +487,10 @@ def update_live_trades():
                     if updated_sig:
                         tg.alert_signal_active(updated_sig)
                         print(f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal)")
+                        db.create_system_log(
+                            status="SUCCESS",
+                            message=f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal)."
+                        )
                         
             elif status == "ACTIVE":
                 # Check if TP or SL is hit
@@ -502,11 +513,19 @@ def update_live_trades():
                     if updated_sig:
                         tg.alert_signal_closed(updated_sig, "TP_HIT")
                         print(f"Signal {symbol} hit TAKE PROFIT (TP)")
+                        db.create_system_log(
+                            status="SUCCESS",
+                            message=f"Signal {symbol} hit TAKE PROFIT (TP) at {current_price}."
+                        )
                 elif is_sl:
                     updated_sig = db.update_signal_status(signal["id"], "SL_HIT", current_price)
                     if updated_sig:
                         tg.alert_signal_closed(updated_sig, "SL_HIT")
                         print(f"Signal {symbol} hit STOP LOSS (SL)")
+                        db.create_system_log(
+                            status="INFO",
+                            message=f"Signal {symbol} hit STOP LOSS (SL) at {current_price}."
+                        )
                         
         except Exception as e:
             print(f"Error updating active trade for {symbol}: {e}")
