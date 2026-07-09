@@ -74,8 +74,8 @@ def create_signal(pair: str, direction: str, trigger_type: str, entry: float, sl
         print(f"Error creating signal: {e}")
         return None
 
-def update_signal_status(signal_id: str, status: str, close_price: float = None):
-    """Update active/pending signal status (e.g. TP_HIT, SL_HIT, ACTIVE, EXPIRED)."""
+def update_signal_status(signal_id: str, status: str, close_price: float = None, actual_entry: float = None, actual_tp: float = None):
+    """Update active/pending signal status (e.g. TP_HIT, SL_HIT, ACTIVE, EXPIRED) and optionally entry/TP prices."""
     if not supabase_client:
         return None
     try:
@@ -91,8 +91,15 @@ def update_signal_status(signal_id: str, status: str, close_price: float = None)
             "status": status,
         }
         
+        if actual_entry is not None:
+            data["entry_price"] = actual_entry
+        if actual_tp is not None:
+            data["tp_price"] = actual_tp
+            
         if status in ["TP_HIT", "SL_HIT", "EXPIRED"]:
             data["closed_at"] = now.isoformat()
+            if close_price is not None:
+                data["close_price"] = close_price
             
             # Calculate holding time in seconds
             created_at = datetime.fromisoformat(signal["created_at"].replace("Z", "+00:00"))

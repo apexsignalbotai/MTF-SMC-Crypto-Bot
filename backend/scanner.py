@@ -434,13 +434,26 @@ def update_live_trades():
                                     is_triggered = True
                                     
                 if is_triggered:
-                    updated_sig = db.update_signal_status(signal["id"], "ACTIVE")
+                    actual_entry = current_price
+                    if direction == "BUY":
+                        actual_risk = actual_entry - sl
+                        actual_tp = actual_entry + (2.0 * actual_risk)
+                    else: # SELL
+                        actual_risk = sl - actual_entry
+                        actual_tp = actual_entry - (2.0 * actual_risk)
+                        
+                    updated_sig = db.update_signal_status(
+                        signal["id"], 
+                        "ACTIVE", 
+                        actual_entry=actual_entry, 
+                        actual_tp=actual_tp
+                    )
                     if updated_sig:
                         tg.alert_signal_active(updated_sig)
-                        print(f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal)")
+                        print(f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal at entry {actual_entry}, TP {actual_tp})")
                         db.create_system_log(
                             status="SUCCESS",
-                            message=f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal)."
+                            message=f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal at entry {actual_entry}, TP {actual_tp})."
                         )
                         
             elif status == "ACTIVE":
