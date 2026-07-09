@@ -257,12 +257,12 @@ def scan_all_markets():
             # Search for the oldest weekly high/low touch/break in the lookback window
             for i in range(len(df) - 2 - lookback_depth, len(df) - 1):
                 candle = df.iloc[i]
-                if candle["high"] >= w_high:
+                if candle["high"] > w_high:
                     trigger_found = True
                     trigger_type = "HIGH"
                     trigger_index = i
                     break
-                elif candle["low"] <= w_low:
+                elif candle["low"] < w_low:
                     trigger_found = True
                     trigger_type = "LOW"
                     trigger_index = i
