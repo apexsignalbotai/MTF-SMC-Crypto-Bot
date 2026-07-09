@@ -118,6 +118,80 @@ def get_weekly_high_low(symbol: str):
     current_week_start = df.iloc[-1]["datetime"]
     return float(prev_week["high"]), float(prev_week["low"]), current_week_start
 
+WEEKLY_STATE_FILE = "weekly_state.json"
+
+def check_weekly_reset():
+    """Check if a new week has started and close all pending/active signals from the previous week."""
+    now_utc = datetime.now(timezone.utc)
+    current_week_start = now_utc - timedelta(days=now_utc.weekday())
+    current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    current_week_str = current_week_start.isoformat()
+    
+    # Load last processed week start
+    last_week_str = None
+    if os.path.exists(WEEKLY_STATE_FILE):
+        try:
+            with open(WEEKLY_STATE_FILE, 'r') as f:
+                state = json.load(f)
+                last_week_str = state.get("last_processed_week_start")
+        except Exception as e:
+            print(f"Error loading weekly state: {e}")
+            
+    # First time initialization: write current week and return
+    if last_week_str is None:
+        try:
+            with open(WEEKLY_STATE_FILE, 'w') as f:
+                json.dump({"last_processed_week_start": current_week_str}, f)
+        except Exception as e:
+            print(f"Error saving initial weekly state: {e}")
+        return
+
+    # If the week has changed, perform the reset!
+    if current_week_str != last_week_str:
+        print(f"[{datetime.now().isoformat()}] New weekly candle open detected ({current_week_str}). Closing previous week's trades...")
+        
+        # 1. Fetch all pending and active signals
+        active_signals = db.get_active_signals()
+        
+        closed_count = 0
+        for signal in active_signals:
+            symbol = signal["pair"]
+            try:
+                # Fetch current price to close active trades at current market rate
+                current_price = None
+                try:
+                    ticker = exchange.fetch_ticker(symbol)
+                    current_price = float(ticker["last"])
+                except Exception as ticker_err:
+                    print(f"Error getting exit price for {symbol} during reset: {ticker_err}")
+                
+                # Update status to EXPIRED
+                db.update_signal_status(signal["id"], "EXPIRED", close_price=current_price)
+                closed_count += 1
+                print(f"Weekly Reset: Closed trade {symbol} at {current_price}")
+            except Exception as e:
+                print(f"Error closing trade {symbol} during weekly reset: {e}")
+                
+        # Send Telegram notification
+        msg = (
+            f"🔄 **WEEKLY CANDLE OPEN RESET**\n\n"
+            f"• **New Week Start**: `{current_week_start.strftime('%Y-%m-%d %H:%M')} UTC`\n"
+            f"• **Closed Signals**: `{closed_count}`\n\n"
+            f"All pending setups and active positions from the previous weekly candle have been closed. A new weekly scanning cycle is now active! 📈"
+        )
+        tg.send_telegram_message(msg)
+        db.create_system_log(
+            status="SUCCESS",
+            message=f"Weekly candle open reset completed. Closed {closed_count} signals from previous week."
+        )
+        
+        # Update state file
+        try:
+            with open(WEEKLY_STATE_FILE, 'w') as f:
+                json.dump({"last_processed_week_start": current_week_str}, f)
+        except Exception as e:
+            print(f"Error saving weekly state: {e}")
+
 def find_swings(df: pd.DataFrame, window: int = 2):
     """
     Find Swing Highs and Swing Lows using a fractal window.
@@ -207,6 +281,7 @@ def analyze_crypto_market(df, df_swings, trigger_index, trigger_type, breakout_p
 
 def scan_all_markets():
     """Main scan function executed every hour (completely stateless)."""
+    check_weekly_reset()
     start_time = time.time()
     print(f"[{datetime.now().isoformat()}] Starting hourly market scan (stateless)...")
     
@@ -363,6 +438,7 @@ def scan_all_markets():
 
 def update_live_trades():
     """Check active and pending signals to see if they hit Entry, SL, or TP."""
+    check_weekly_reset()
     print("Checking status of active/pending trades...")
     active_signals = db.get_active_signals()
     
