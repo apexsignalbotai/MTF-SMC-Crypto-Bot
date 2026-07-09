@@ -56,11 +56,6 @@ def get_watched_symbols():
         if not top_symbols:
             top_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "LINK/USDT"]
             
-        # Merge with Forex Override List
-        for forex_sym in FOREX_OVERRIDE_LIST:
-            if forex_sym not in top_symbols:
-                top_symbols.append(forex_sym)
-                
         # Cache results
         cache_data = {
             "updated_at": now.isoformat(),
