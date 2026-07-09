@@ -1,6 +1,10 @@
 import requests
 from datetime import datetime, timezone
 
+# Module-level cache variables
+_cached_events = None
+_last_fetch_time = None
+
 def get_currencies_for_symbol(symbol: str):
     """Extract currency names from pair name. e.g. GBP/USDT:USDT -> ['GBP', 'USD']"""
     symbol_upper = symbol.upper()
@@ -20,35 +24,34 @@ def get_currencies_for_symbol(symbol: str):
             currencies.append(c)
     return list(set(currencies))
 
-def is_news_time(symbol: str) -> bool:
+def fetch_high_impact_news() -> list:
     """
-    Check if there is high impact news for the symbol's currencies within +-30 minutes.
-    Fail-safe: returns False on any connection/parsing errors to avoid blocking scans.
+    Fetch and return all high-impact economic news events scheduled for today.
+    Fetches from EODHD and DailyFX APIs.
     """
-    currencies = get_currencies_for_symbol(symbol)
+    events_list = []
     now = datetime.now(timezone.utc)
+    today_str = now.strftime("%Y-%m-%d")
     
     # 1. EODHD API Check (Demo token allows free public economic events)
     try:
-        today_str = now.strftime("%Y-%m-%d")
         url = f"https://eodhd.com/api/economic-calendar?api_token=demo&from={today_str}&to={today_str}&fmt=json"
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
-            events = res.json()
-            for event in events:
+            data = res.json()
+            for event in data:
                 impact = event.get("impact", "")
-                event_currency = event.get("currency", "")
-                
-                # Check for High Impact news matching our currencies
-                if impact and impact.upper() == "HIGH" and event_currency in currencies:
+                currency = event.get("currency", "")
+                if impact and impact.upper() == "HIGH" and currency:
                     event_date_str = event.get("date", "")
                     if event_date_str:
                         # EODHD date format: "YYYY-MM-DD HH:MM:SS" (UTC)
                         event_time = datetime.strptime(event_date_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                        time_diff = abs((now - event_time).total_seconds())
-                        if time_diff <= 1800:  # 30 minutes in seconds
-                            print(f"[NEWS FILTER] Blocking setup for {symbol}: High impact news '{event.get('event')}' ({event_currency}) at {event_date_str} UTC.")
-                            return True
+                        events_list.append({
+                            "currency": currency.upper(),
+                            "time": event_time,
+                            "name": event.get("event", "Economic Event")
+                        })
     except Exception as e:
         print(f"[NEWS FILTER] Warning: EODHD economic calendar fetch failed: {e}")
         
@@ -57,22 +60,47 @@ def is_news_time(symbol: str) -> bool:
         url = "https://calendar-api.dailyfx.com/calendar"
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
-            events = res.json()
-            for event in events:
+            data = res.json()
+            for event in data:
                 importance = event.get("importance", "")
-                event_currency = event.get("currency", "")
-                
-                if importance and importance.upper() == "HIGH" and event_currency.upper() in currencies:
+                currency = event.get("currency", "")
+                if importance and importance.upper() == "HIGH" and currency:
                     event_date_str = event.get("date", "")
                     if event_date_str:
                         # DailyFX date format: ISO string "2026-07-09T14:30:00Z"
                         event_date_str = event_date_str.replace("Z", "+00:00")
                         event_time = datetime.fromisoformat(event_date_str)
-                        time_diff = abs((now - event_time).total_seconds())
-                        if time_diff <= 1800:  # 30 minutes
-                            print(f"[NEWS FILTER] Blocking setup for {symbol}: High impact news '{event.get('title')}' ({event_currency}) at {event_date_str}.")
-                            return True
+                        events_list.append({
+                            "currency": currency.upper(),
+                            "time": event_time,
+                            "name": event.get("title", "Economic Event")
+                        })
     except Exception as e:
         print(f"[NEWS FILTER] Warning: DailyFX calendar fetch failed: {e}")
         
+    return events_list
+
+def is_news_time(symbol: str) -> bool:
+    """
+    Check if there is high impact news for the symbol's currencies within +-30 minutes.
+    Uses cached events if fetched within the last 5 minutes (300 seconds) to avoid spamming APIs.
+    """
+    global _cached_events, _last_fetch_time
+    now = datetime.now(timezone.utc)
+    
+    # Refresh cache if missing or older than 5 minutes
+    if _cached_events is None or _last_fetch_time is None or (now - _last_fetch_time).total_seconds() > 300:
+        print("[NEWS FILTER] Fetching fresh economic calendar events...")
+        _cached_events = fetch_high_impact_news()
+        _last_fetch_time = now
+        print(f"[NEWS FILTER] Successfully cached {len(_cached_events)} high-impact events for today.")
+        
+    currencies = get_currencies_for_symbol(symbol)
+    for event in _cached_events:
+        if event["currency"] in currencies:
+            time_diff = abs((now - event["time"]).total_seconds())
+            if time_diff <= 1800:  # 30 minutes in seconds
+                print(f"[NEWS FILTER] Blocking setup for {symbol}: High impact news '{event['name']}' ({event['currency']}) at {event['time']}.")
+                return True
+                
     return False
