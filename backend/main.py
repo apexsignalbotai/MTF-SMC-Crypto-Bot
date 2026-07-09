@@ -59,7 +59,11 @@ def get_current_price(symbol: str):
     try:
         if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
             binance_symbol = symbol.split(":")[0]
-            ticker = sc.binance_exchange.fetch_ticker(binance_symbol)
+            try:
+                ticker = sc.binance_exchange.fetch_ticker(binance_symbol)
+            except Exception as binance_ticker_error:
+                print(f"[EXCHANGE FALLBACK] Binance fetch_ticker failed for {binance_symbol}: {binance_ticker_error}. Trying HTX...")
+                ticker = sc.htx_exchange.fetch_ticker(binance_symbol)
             price = float(ticker["last"])
         else:
             ticker = sc.exchange.fetch_ticker(symbol)

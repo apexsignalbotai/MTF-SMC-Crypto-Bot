@@ -115,6 +115,11 @@ binance_exchange = ccxt.binance({
     'enableRateLimit': True
 })
 
+# Initialize HTX exchange client as a secondary fallback for forex stablecoin perps
+htx_exchange = ccxt.htx({
+    'enableRateLimit': True
+})
+
 def load_local_watchlist():
     """Load local watchlist of pairs currently being monitored for SMC setups."""
     if os.path.exists(WATCHLIST_FILE):
@@ -134,11 +139,15 @@ def save_local_watchlist(watchlist):
         print(f"Error saving local watchlist: {e}")
 
 def fetch_candles(symbol: str, timeframe: str, limit: int = 100):
-    """Fetch candles from exchange, falling back to Binance for EUR/GBP stablecoin pairs."""
+    """Fetch candles from exchange, falling back to Binance or HTX for EUR/GBP stablecoin pairs."""
     try:
         if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
             binance_symbol = symbol.split(":")[0] # Translate EUR/USDT:USDT -> EUR/USDT
-            ohlcv = binance_exchange.fetch_ohlcv(binance_symbol, timeframe, limit=limit)
+            try:
+                ohlcv = binance_exchange.fetch_ohlcv(binance_symbol, timeframe, limit=limit)
+            except Exception as binance_error:
+                print(f"[EXCHANGE FALLBACK] Binance fetch failed for {binance_symbol}: {binance_error}. Trying HTX...")
+                ohlcv = htx_exchange.fetch_ohlcv(binance_symbol, timeframe, limit=limit)
         else:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             
@@ -430,7 +439,11 @@ def update_live_trades():
             # Fetch current ticker price
             if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
                 binance_symbol = symbol.split(":")[0]
-                ticker = binance_exchange.fetch_ticker(binance_symbol)
+                try:
+                    ticker = binance_exchange.fetch_ticker(binance_symbol)
+                except Exception as binance_ticker_error:
+                    print(f"[EXCHANGE FALLBACK] Binance fetch_ticker failed for {binance_symbol}: {binance_ticker_error}. Trying HTX...")
+                    ticker = htx_exchange.fetch_ticker(binance_symbol)
             else:
                 ticker = exchange.fetch_ticker(symbol)
             current_price = float(ticker["last"])
