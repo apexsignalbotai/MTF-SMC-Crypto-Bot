@@ -4,7 +4,7 @@ import ccxt
 import pandas as pd
 import numpy as np
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
 import supabase_client as db
@@ -220,19 +220,24 @@ def scan_all_markets():
     
     for symbol in symbols_to_scan:
         try:
-            # 2. Get Weekly High/Low and current week start
-            w_high, w_low, current_week_start = get_weekly_high_low(symbol)
-            if w_high is None or w_low is None or current_week_start is None:
-                continue
-                
-            # 1. Prevent duplicate active/pending signals, or any signal generated since the start of this week
+            # 1. Prevent duplicate active/pending signals
             db_signal = db.get_signal_by_pair(symbol)
             if db_signal:
                 print(f"Skipping {symbol}: Active/Pending signal already exists in Database.")
                 continue
                 
+            # Calculate current week start locally
+            now_utc = datetime.now(timezone.utc)
+            current_week_start = now_utc - timedelta(days=now_utc.weekday())
+            current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            
             if db.has_signal_since(symbol, current_week_start):
                 print(f"Skipping {symbol}: A signal was already generated this week for the current weekly candle.")
+                continue
+                
+            # 2. Get Weekly High/Low
+            w_high, w_low, _ = get_weekly_high_low(symbol)
+            if w_high is None or w_low is None:
                 continue
                 
             time.sleep(0.3) # Sleep to respect Bybit rate limit
