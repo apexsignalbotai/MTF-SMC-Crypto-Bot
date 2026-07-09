@@ -9,27 +9,11 @@ from dotenv import load_dotenv
 
 import supabase_client as db
 import telegram_bot as tg
-import news_filter as nf
 
 load_dotenv()
 
 WATCHLIST_FILE = "watchlist_state.json"
 SYMBOLS_CACHE_FILE = "watched_symbols_cache.json"
-
-FOREX_OVERRIDE_LIST = [
-    "EUR/USDT:USDT",
-    "GBP/USDT:USDT",
-    "XAU/USDT:USDT",
-    "CL/USDT:USDT"
-]
-
-def get_market_category(symbol: str) -> str:
-    symbol_upper = symbol.upper()
-    forex_keywords = ["EUR/", "GBP/", "AUD/", "CAD/", "JPY/", "CHF/", "XAU/", "CL/"]
-    for kw in forex_keywords:
-        if kw in symbol_upper:
-            return "FOREX"
-    return "CRYPTO"
 
 def get_watched_symbols():
     """Retrieve symbols to scan, dynamically updating the top 25 volume pairs on Bybit on Mondays."""
@@ -44,11 +28,7 @@ def get_watched_symbols():
             days_old = (now - cache_time).days
             # Monday is weekday() == 0. If not Monday, or it's same week, reuse cache
             if days_old < 7 and (now.weekday() != 0 or cache_time.weekday() == 0):
-                symbols = cache["symbols"]
-                for forex_sym in FOREX_OVERRIDE_LIST:
-                    if forex_sym not in symbols:
-                        symbols.append(forex_sym)
-                return symbols
+                return cache["symbols"]
         except Exception as e:
             print(f"Error reading symbols cache, refetching: {e}")
             
@@ -96,11 +76,7 @@ def get_watched_symbols():
     except Exception as e:
         print(f"Failed to fetch dynamic symbols: {e}")
         # Default fallback
-        fallback = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-        for forex_sym in FOREX_OVERRIDE_LIST:
-            if forex_sym not in fallback:
-                fallback.append(forex_sym)
-        return fallback
+        return ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
 LATEST_WATCHLIST = []
 
@@ -108,16 +84,6 @@ LATEST_WATCHLIST = []
 exchange = ccxt.bybit({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'} # Bybit swaps/futures have high liquidity and no aggressive shared IP bans
-})
-
-# Initialize Binance exchange client for forex stablecoin perps fallback
-binance_exchange = ccxt.binance({
-    'enableRateLimit': True
-})
-
-# Initialize HTX exchange client as a secondary fallback for forex stablecoin perps
-htx_exchange = ccxt.htx({
-    'enableRateLimit': True
 })
 
 def load_local_watchlist():
@@ -139,17 +105,9 @@ def save_local_watchlist(watchlist):
         print(f"Error saving local watchlist: {e}")
 
 def fetch_candles(symbol: str, timeframe: str, limit: int = 100):
-    """Fetch candles from exchange, falling back to Binance or HTX for EUR/GBP stablecoin pairs."""
+    """Fetch candles from Bybit exchange."""
     try:
-        if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
-            binance_symbol = symbol.split(":")[0] # Translate EUR/USDT:USDT -> EUR/USDT
-            try:
-                ohlcv = binance_exchange.fetch_ohlcv(binance_symbol, timeframe, limit=limit)
-            except Exception as binance_error:
-                print(f"[EXCHANGE FALLBACK] Binance fetch failed for {binance_symbol}: {binance_error}. Trying HTX...")
-                ohlcv = htx_exchange.fetch_ohlcv(binance_symbol, timeframe, limit=limit)
-        else:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             
         df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
@@ -275,11 +233,6 @@ def scan_all_markets():
     
     for symbol in symbols_to_scan:
         try:
-            # Check for high-impact news release
-            if nf.is_news_time(symbol):
-                print(f"Skipping scan for {symbol} due to high-impact news release.")
-                continue
-                
             # 2. Get Weekly High/Low and current week start
             w_high, w_low, current_week_start = get_weekly_high_low(symbol)
             if w_high is None or w_low is None or current_week_start is None:
@@ -437,15 +390,7 @@ def update_live_trades():
         symbol = signal["pair"]
         try:
             # Fetch current ticker price
-            if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
-                binance_symbol = symbol.split(":")[0]
-                try:
-                    ticker = binance_exchange.fetch_ticker(binance_symbol)
-                except Exception as binance_ticker_error:
-                    print(f"[EXCHANGE FALLBACK] Binance fetch_ticker failed for {binance_symbol}: {binance_ticker_error}. Trying HTX...")
-                    ticker = htx_exchange.fetch_ticker(binance_symbol)
-            else:
-                ticker = exchange.fetch_ticker(symbol)
+            ticker = exchange.fetch_ticker(symbol)
             current_price = float(ticker["last"])
             
             entry = float(signal["entry_price"])
@@ -477,11 +422,6 @@ def update_live_trades():
                     in_entry_zone = True
                     
                 if in_entry_zone:
-                    # Skip activation check if high impact news is active
-                    if nf.is_news_time(symbol):
-                        print(f"Skipping trade activation check for {symbol} due to high-impact news release.")
-                        continue
-                        
                     # Fetch 15m candles to look for external structure reversal (15m CHOCH)
                     df_15 = fetch_candles(symbol, "15m", limit=60)
                     time.sleep(0.3) # Respect API rate limits
@@ -521,37 +461,6 @@ def update_live_trades():
                         )
                         
             elif status == "ACTIVE":
-                # Weekend Protection: Move SL to Entry for Forex pairs on Friday after 16:00 UTC
-                if get_market_category(symbol) == "FOREX":
-                    now_utc = datetime.now(timezone.utc)
-                    is_weekend = (now_utc.weekday() == 4 and now_utc.hour >= 16) or (now_utc.weekday() in [5, 6])
-                    if is_weekend and sl != entry:
-                        # Check if in profit
-                        in_profit = False
-                        if direction == "BUY" and current_price > entry:
-                            in_profit = True
-                        elif direction == "SELL" and current_price < entry:
-                            in_profit = True
-                            
-                        if in_profit:
-                            db.update_signal_sl(signal["id"], entry)
-                            # Update local variable so subsequent SL checks use the new SL (entry)
-                            sl = entry
-                            msg = (
-                                f"🛡️ **WEEKEND PROTECTION ACTIVE**\n\n"
-                                f"• **Pair**: `{symbol}`\n"
-                                f"• **Direction**: `{direction}`\n"
-                                f"• **Entry Price**: `${entry}`\n"
-                                f"• **Current Price**: `${current_price}`\n\n"
-                                f"**Stop Loss (SL) has been moved to Entry Price (Break-Even)** to protect the position against weekend market opening gap risk! 🔒"
-                            )
-                            tg.send_telegram_message(msg)
-                            db.create_system_log(
-                                status="INFO",
-                                message=f"Weekend Protection: Moved SL to entry ({entry}) for {symbol}."
-                            )
-                            print(f"[WEEKEND PROTECTION] Moved SL to entry for {symbol}")
-
                 # Check if TP or SL is hit
                 is_tp = False
                 is_sl = False

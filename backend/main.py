@@ -55,54 +55,30 @@ def health_check():
 
 @app.get("/api/price")
 def get_current_price(symbol: str):
-    """Retrieve the current ticker price for a given symbol, falling back to Binance for EUR/GBP."""
+    """Retrieve the current ticker price from Bybit exchange."""
     try:
-        if "EUR/USDT" in symbol or "GBP/USDT" in symbol:
-            binance_symbol = symbol.split(":")[0]
-            try:
-                ticker = sc.binance_exchange.fetch_ticker(binance_symbol)
-            except Exception as binance_ticker_error:
-                print(f"[EXCHANGE FALLBACK] Binance fetch_ticker failed for {binance_symbol}: {binance_ticker_error}. Trying HTX...")
-                ticker = sc.htx_exchange.fetch_ticker(binance_symbol)
-            price = float(ticker["last"])
-        else:
-            ticker = sc.exchange.fetch_ticker(symbol)
-            price = float(ticker["last"])
+        ticker = sc.exchange.fetch_ticker(symbol)
+        price = float(ticker["last"])
         print(f"DEBUG PRICE API: {symbol} -> {price}")
         return {"price": price}
     except Exception as e:
         print(f"DEBUG PRICE API ERROR: {symbol} -> {e}")
         return {"price": None, "error": str(e)}
 
-def classify_item(item):
-    pair = item.get("pair", "")
-    pair_upper = pair.upper()
-    forex_keywords = ["EUR/", "GBP/", "AUD/", "CAD/", "JPY/", "CHF/", "XAU/", "CL/"]
-    market_category = "CRYPTO"
-    for kw in forex_keywords:
-        if kw in pair_upper:
-            market_category = "FOREX"
-            break
-    item["market_category"] = market_category
-    return item
-
 @app.get("/api/signals/active")
 def get_active_signals():
     """Endpoint for frontend to retrieve active and pending signal cards."""
-    signals = db.get_active_signals()
-    return [classify_item(s) for s in signals]
+    return db.get_active_signals()
 
 @app.get("/api/watchlist")
 def get_watchlist():
     """Endpoint for frontend to retrieve symbols currently monitored for setups."""
-    items = sc.get_current_watchlist()
-    return [classify_item(i) for i in items]
+    return sc.get_current_watchlist()
 
 @app.get("/api/signals/history")
 def get_signals_history():
     """Endpoint for frontend to retrieve past closed trades."""
-    history = db.get_monthly_history()
-    return [classify_item(s) for s in history]
+    return db.get_monthly_history()
 
 @app.get("/api/signals/stats")
 def get_signals_stats():
