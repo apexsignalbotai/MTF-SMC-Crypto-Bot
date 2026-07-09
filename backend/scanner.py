@@ -43,9 +43,6 @@ def get_watched_symbols():
             # Filter for USDT linear swaps, e.g. "BTC/USDT" or "BTC/USDT:USDT"
             # quoteVolume represents volume in USDT
             if ("/USDT" in symbol) and ticker.get("quoteVolume"):
-                # Exclude Forex/Commodity overrides from crypto volume sort list
-                if get_market_category(symbol) == "FOREX":
-                    continue
                 usdt_swaps.append({
                     "symbol": symbol,
                     "volume": float(ticker["quoteVolume"])
@@ -214,12 +211,7 @@ def analyze_crypto_market(df, df_swings, trigger_index, trigger_type, breakout_p
                 
     return signal_direction, setup_type, leg_start, leg_end
 
-def analyze_forex_market(df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price):
-    """
-    Forex/Commodity-specific strategy analysis.
-    Kept completely separate so it can be tweaked independently in the future.
-    """
-    return analyze_crypto_market(df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price)
+
 
 def scan_all_markets():
     """Main scan function executed every hour (completely stateless)."""
@@ -307,15 +299,9 @@ def scan_all_markets():
             breakout_peak = float(sub_df["high"].max()) if len(sub_df) > 0 else float(last_candle["high"])
             breakout_valley = float(sub_df["low"].min()) if len(sub_df) > 0 else float(last_candle["low"])
 
-            category = get_market_category(symbol)
-            if category == "FOREX":
-                signal_direction, setup_type, leg_start, leg_end = analyze_forex_market(
-                    df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price
-                )
-            else:
-                signal_direction, setup_type, leg_start, leg_end = analyze_crypto_market(
-                    df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price
-                )
+            signal_direction, setup_type, leg_start, leg_end = analyze_crypto_market(
+                df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price
+            )
 
             if signal_direction and leg_start is not None and leg_end is not None:
                 fib_range = abs(leg_end - leg_start)
@@ -365,19 +351,16 @@ def scan_all_markets():
     LATEST_WATCHLIST = current_watchlist
     
     # Write audit log to database
-    forex_scanned = [s.split(':')[0] for s in symbols_to_scan if get_market_category(s) == "FOREX"]
-    forex_summary = f" (Includes Forex/Commodities: {', '.join(forex_scanned)})" if forex_scanned else ""
-
     if errors_count == 0:
         db.create_system_log(
             status="SUCCESS",
-            message=f"Scan completed successfully. Scanned {scanned_count} symbols{forex_summary}.",
+            message=f"Scan completed successfully. Scanned {scanned_count} symbols.",
             execution_time=round(execution_time, 2)
         )
     else:
         db.create_system_log(
             status="WARNING" if errors_count < 3 else "ERROR",
-            message=f"Scan completed with {errors_count} errors. Scanned {scanned_count} symbols{forex_summary}.",
+            message=f"Scan completed with {errors_count} errors. Scanned {scanned_count} symbols.",
             execution_time=round(execution_time, 2)
         )
 
