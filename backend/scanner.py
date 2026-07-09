@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 import supabase_client as db
 import telegram_bot as tg
+import news_filter as nf
 
 load_dotenv()
 
@@ -265,6 +266,11 @@ def scan_all_markets():
     
     for symbol in symbols_to_scan:
         try:
+            # Check for high-impact news release
+            if nf.is_news_time(symbol):
+                print(f"Skipping scan for {symbol} due to high-impact news release.")
+                continue
+                
             # 2. Get Weekly High/Low and current week start
             w_high, w_low, current_week_start = get_weekly_high_low(symbol)
             if w_high is None or w_low is None or current_week_start is None:
@@ -458,6 +464,11 @@ def update_live_trades():
                     in_entry_zone = True
                     
                 if in_entry_zone:
+                    # Skip activation check if high impact news is active
+                    if nf.is_news_time(symbol):
+                        print(f"Skipping trade activation check for {symbol} due to high-impact news release.")
+                        continue
+                        
                     # Fetch 15m candles to look for external structure reversal (15m CHOCH)
                     df_15 = fetch_candles(symbol, "15m", limit=60)
                     time.sleep(0.3) # Respect API rate limits
@@ -497,6 +508,37 @@ def update_live_trades():
                         )
                         
             elif status == "ACTIVE":
+                # Weekend Protection: Move SL to Entry for Forex pairs on Friday after 16:00 UTC
+                if get_market_category(symbol) == "FOREX":
+                    now_utc = datetime.now(timezone.utc)
+                    is_weekend = (now_utc.weekday() == 4 and now_utc.hour >= 16) or (now_utc.weekday() in [5, 6])
+                    if is_weekend and sl != entry:
+                        # Check if in profit
+                        in_profit = False
+                        if direction == "BUY" and current_price > entry:
+                            in_profit = True
+                        elif direction == "SELL" and current_price < entry:
+                            in_profit = True
+                            
+                        if in_profit:
+                            db.update_signal_sl(signal["id"], entry)
+                            # Update local variable so subsequent SL checks use the new SL (entry)
+                            sl = entry
+                            msg = (
+                                f"🛡️ **WEEKEND PROTECTION ACTIVE**\n\n"
+                                f"• **Pair**: `{symbol}`\n"
+                                f"• **Direction**: `{direction}`\n"
+                                f"• **Entry Price**: `${entry}`\n"
+                                f"• **Current Price**: `${current_price}`\n\n"
+                                f"**Stop Loss (SL) has been moved to Entry Price (Break-Even)** to protect the position against weekend market opening gap risk! 🔒"
+                            )
+                            tg.send_telegram_message(msg)
+                            db.create_system_log(
+                                status="INFO",
+                                message=f"Weekend Protection: Moved SL to entry ({entry}) for {symbol}."
+                            )
+                            print(f"[WEEKEND PROTECTION] Moved SL to entry for {symbol}")
+
                 # Check if TP or SL is hit
                 is_tp = False
                 is_sl = False

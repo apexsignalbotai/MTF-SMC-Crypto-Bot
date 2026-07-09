@@ -107,6 +107,22 @@ def update_signal_status(signal_id: str, status: str, close_price: float = None)
         print(f"Error updating signal status: {e}")
         return None
 
+def update_signal_sl(signal_id: str, new_sl: float):
+    """Update the Stop Loss (SL) price of a signal."""
+    if not supabase_client:
+        return None
+    try:
+        data = {
+            "sl_price": new_sl
+        }
+        response = supabase_client.table("signals").update(data).eq("id", signal_id).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Error updating signal SL: {e}")
+        return None
+
 def get_monthly_history():
     """Retrieve closed signal history for the current and previous month."""
     if not supabase_client:
