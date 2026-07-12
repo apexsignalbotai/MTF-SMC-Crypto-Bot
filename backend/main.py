@@ -126,6 +126,20 @@ def trigger_manual_trade_update(background_tasks: BackgroundTasks):
     background_tasks.add_task(sc.update_live_trades)
     return {"status": "Trade updates initiated in background"}
 
+@app.get("/api/debug-update")
+def debug_update_trades():
+    import io
+    import sys
+    old_stdout = sys.stdout
+    new_stdout = io.StringIO()
+    sys.stdout = new_stdout
+    try:
+        sc.update_live_trades()
+    except Exception as e:
+        print(f"EXCEPTION: {e}")
+    sys.stdout = old_stdout
+    return {"logs": new_stdout.getvalue()}
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
