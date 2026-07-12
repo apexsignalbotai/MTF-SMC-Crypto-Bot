@@ -98,8 +98,7 @@ def update_signal_status(signal_id: str, status: str, close_price: float = None,
             
         if status in ["TP_HIT", "SL_HIT", "EXPIRED"]:
             data["closed_at"] = now.isoformat()
-            if close_price is not None:
-                data["close_price"] = close_price
+
             
             # Calculate holding time in seconds
             created_at = datetime.fromisoformat(signal["created_at"].replace("Z", "+00:00"))
