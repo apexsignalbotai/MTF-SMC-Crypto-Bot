@@ -560,7 +560,7 @@ def update_live_trades():
                         tg.alert_signal_closed(updated_sig, "SL_HIT")
                         print(f"Signal {symbol} hit STOP LOSS (SL)")
                         db.create_system_log(
-                            status="INFO",
+                            status="SUCCESS",
                             message=f"Signal {symbol} hit STOP LOSS (SL) at {current_price}."
                         )
                         
