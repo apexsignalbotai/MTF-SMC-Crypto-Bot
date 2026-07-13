@@ -108,15 +108,28 @@ def fetch_candles(symbol: str, timeframe: str, limit: int = 100):
         print(f"Error fetching candles for {symbol} on {timeframe}: {e}")
         return None
 
-def get_weekly_high_low(symbol: str):
-    """Get high and low of the previous weekly closed candle, and the start timestamp of the current week."""
-    df = fetch_candles(symbol, "1w", limit=3)
-    if df is None or len(df) < 2:
-        return None, None, None
-    # Last candle (index -1) is current open week, second to last (index -2) is previous closed week
-    prev_week = df.iloc[-2]
-    current_week_start = df.iloc[-1]["datetime"]
-    return float(prev_week["high"]), float(prev_week["low"]), current_week_start
+def get_monday_range(symbol: str, current_week_start: datetime) -> tuple[float, float]:
+    """Get Monday's High and Low for the current week (Monday 00:00 to Tuesday 00:00 UTC)."""
+    try:
+        # Fetch 1H candles to cover the last 7 days (limit=200)
+        df = fetch_candles(symbol, "1h", limit=200)
+        if df is None or len(df) == 0:
+            return None, None
+            
+        # Monday ends at current_week_start + 24 hours
+        monday_end = current_week_start + timedelta(hours=24)
+        
+        # Filter candles within Monday
+        monday_candles = df[(df["datetime"] >= current_week_start) & (df["datetime"] < monday_end)]
+        if len(monday_candles) == 0:
+            return None, None
+            
+        monday_high = float(monday_candles["high"].max())
+        monday_low = float(monday_candles["low"].min())
+        return monday_high, monday_low
+    except Exception as e:
+        print(f"Error getting Monday range for {symbol}: {e}")
+        return None, None
 
 WEEKLY_STATE_FILE = "weekly_state.json"
 
@@ -222,73 +235,27 @@ def find_swings(df: pd.DataFrame, window: int = 2):
             
     return df
 
-def analyze_crypto_market(df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price, current_week_start):
-    """
-    Crypto-specific strategy analysis.
-    Rule: 1H breakout retracement / CHOCH.
-    """
-    signal_direction = None
-    setup_type = None
-    leg_start = None
-    leg_end = None
-    
-    # Filter candles belonging to the current week
-    week_candles = df[df["datetime"] >= current_week_start]
-    
-    if trigger_type == "HIGH":
-        # Find the most recent confirmed swing low BEFORE or AT the weekly breakout trigger
-        swing_low_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_low"])
-        recent_swing_low = float(swing_low_rows.iloc[-1]["swing_low"]) if len(swing_low_rows) > 0 else breakout_valley
-        
-        # Bearish CHOCH (Reversal): price closes below recent swing low
-        if close_price < recent_swing_low:
-            signal_direction = "SELL"
-            setup_type = "CHOCH"
-            swing_high_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_high"])
-            leg_start = float(swing_high_rows_all.iloc[-1]["swing_high"]) if len(swing_high_rows_all) > 0 else breakout_peak
-            leg_end = float(last_candle["low"])
-        else:
-            # Bullish BOS / Breakout Retracement (BUY):
-            # Drawn from the lowest low of the week to the new breakout peak
-            signal_direction = "BUY"
-            setup_type = "BOS"
-            leg_start = float(week_candles["low"].min()) if len(week_candles) > 0 else recent_swing_low
-            leg_end = breakout_peak
-            
-    elif trigger_type == "LOW":
-        # Find the most recent confirmed swing high BEFORE or AT the weekly breakout trigger
-        swing_high_rows = df_swings.loc[:trigger_index].dropna(subset=["swing_high"])
-        recent_swing_high = float(swing_high_rows.iloc[-1]["swing_high"]) if len(swing_high_rows) > 0 else breakout_peak
-        
-        # Bullish CHOCH (Reversal): price closes above recent swing high
-        if close_price > recent_swing_high:
-            signal_direction = "BUY"
-            setup_type = "CHOCH"
-            swing_low_rows_all = df_swings.iloc[:len(df)-1].dropna(subset=["swing_low"])
-            leg_start = float(swing_low_rows_all.iloc[-1]["swing_low"]) if len(swing_low_rows_all) > 0 else breakout_valley
-            leg_end = float(last_candle["high"])
-        else:
-            # Bearish BOS / Breakout Retracement (SELL):
-            # Drawn from the highest high of the week to the new breakout valley
-            signal_direction = "SELL"
-            setup_type = "BOS"
-            leg_start = float(week_candles["high"].max()) if len(week_candles) > 0 else recent_swing_high
-            leg_end = breakout_valley
-            
-    return signal_direction, setup_type, leg_start, leg_end
-
-
-
 def scan_all_markets():
-    """Main scan function executed every hour (completely stateless)."""
+    """Main scan function executed every hour (Monday Range PO3 model)."""
     check_weekly_reset()
     start_time = time.time()
-    print(f"[{datetime.now().isoformat()}] Starting hourly market scan (stateless)...")
+    
+    # Check if today is Monday (Accumulation Phase)
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.weekday() == 0:
+        print(f"[{datetime.now().isoformat()}] Today is Monday (Accumulation Phase). Skipping scan for sweeps.")
+        return
+        
+    print(f"[{datetime.now().isoformat()}] Starting hourly Monday Range PO3 market scan...")
     
     symbols_to_scan = get_watched_symbols()
     scanned_count = 0
     errors_count = 0
     current_watchlist = []
+    
+    # Calculate current week start (Monday 00:00 UTC)
+    current_week_start = now_utc - timedelta(days=now_utc.weekday())
+    current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0)
     
     for symbol in symbols_to_scan:
         try:
@@ -298,141 +265,96 @@ def scan_all_markets():
                 print(f"Skipping {symbol}: Active/Pending signal already exists in Database.")
                 continue
                 
-            # Calculate current week start locally
-            now_utc = datetime.now(timezone.utc)
-            current_week_start = now_utc - timedelta(days=now_utc.weekday())
-            current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0)
-            
             if db.has_signal_since(symbol, current_week_start):
                 print(f"Skipping {symbol}: A signal was already generated this week for the current weekly candle.")
                 continue
                 
-            # 2. Get Weekly High/Low
-            w_high, w_low, _ = get_weekly_high_low(symbol)
-            if w_high is None or w_low is None:
-                continue
-                
             time.sleep(0.3) # Sleep to respect Bybit rate limit
             
-            # 3. Fetch 1H candles
-            df = fetch_candles(symbol, "1h", limit=100)
-            if df is None or len(df) < 20:
+            # 2. Get Monday High & Low
+            m_high, m_low = get_monday_range(symbol, current_week_start)
+            if m_high is None or m_low is None:
+                print(f"Skipping {symbol}: Monday range not fully established yet.")
                 continue
                 
-            # Look back up to 48 closed candles before the last completed candle (index -2)
-            lookback_depth = min(48, len(df) - 3)
-            
-            trigger_found = False
-            trigger_type = None # "HIGH" or "LOW"
-            trigger_index = -1
-            
-            # Search for the oldest weekly high/low touch/break in the lookback window
-            for i in range(len(df) - 2 - lookback_depth, len(df) - 1):
-                candle = df.iloc[i]
-                if candle["high"] > w_high:
-                    trigger_found = True
-                    trigger_type = "HIGH"
-                    trigger_index = i
-                    break
-                elif candle["low"] < w_low:
-                    trigger_found = True
-                    trigger_type = "LOW"
-                    trigger_index = i
-                    break
-                    
-            if not trigger_found:
-                scanned_count += 1
-                time.sleep(1.0)
-                continue
-                
-            # Add to dynamic cached watchlist
+            # Add to watchlist cache for frontend
             current_watchlist.append({
                 "pair": symbol,
-                "trigger": trigger_type,
-                "level": w_high if trigger_type == "HIGH" else w_low,
-                "time": df.iloc[trigger_index]["datetime"].isoformat()
+                "trigger": "PO3_RANGE",
+                "level": f"MH: {m_high} | ML: {m_low}",
+                "time": now_utc.isoformat()
             })
-                
-            # 4. Check if the last completed candle (index -2) triggered a BOS or CHOCH
-            # Swing points must be calculated from historical data
-            df_swings = find_swings(df, window=2)
             
-            # Last completed candle
-            last_candle = df.iloc[-2]
-            close_price = float(last_candle["close"])
+            # 3. Fetch current price
+            ticker = exchange.fetch_ticker(symbol)
+            current_price = float(ticker["last"])
             
+            # 4. Check for sweeps
             signal_direction = None
-            setup_type = None
-            leg_start = None
-            leg_end = None
             
-            # Calculate peak and valley values
-            sub_df = df.iloc[trigger_index:len(df)-1]
-            breakout_peak = float(sub_df["high"].max()) if len(sub_df) > 0 else float(last_candle["high"])
-            breakout_valley = float(sub_df["low"].min()) if len(sub_df) > 0 else float(last_candle["low"])
-
-            signal_direction, setup_type, leg_start, leg_end = analyze_crypto_market(
-                df, df_swings, trigger_index, trigger_type, breakout_peak, breakout_valley, last_candle, close_price, current_week_start
-            )
-
-            if signal_direction and leg_start is not None and leg_end is not None:
-                fib_range = abs(leg_end - leg_start)
+            # Find the lowest/highest price of the current week up to now (for SL calculation)
+            df_1h = fetch_candles(symbol, "1h", limit=200)
+            if df_1h is None or len(df_1h) == 0:
+                continue
+            week_candles = df_1h[df_1h["datetime"] >= current_week_start]
+            week_low = float(week_candles["low"].min()) if len(week_candles) > 0 else current_price
+            week_high = float(week_candles["high"].max()) if len(week_candles) > 0 else current_price
+            
+            if current_price < m_low:
+                # Bullish Sweep (Monday Low swept)
+                signal_direction = "BUY"
+                sl_price = week_low * 0.9995 # 0.05% safety buffer
+                tp_price = current_price + 2.0 * (current_price - sl_price) # 1:2 R:R
+                entry_price = current_price
                 
-                if signal_direction == "BUY":
-                    # Entry at 0.5 Fib, SL at 0.89 Fib (as requested by user)
-                    entry_price = leg_end - (0.5 * fib_range)
-                    sl_price = leg_end - (0.89 * fib_range)
-                    risk = entry_price - sl_price
-                    tp_price = entry_price + (2 * risk) # 1:2 R:R
-                else:
-                    # Entry at 0.5 Fib, SL at 0.89 Fib
-                    entry_price = leg_end + (0.5 * fib_range)
-                    sl_price = leg_end + (0.89 * fib_range)
-                    risk = sl_price - entry_price
-                    tp_price = entry_price - (2 * risk) # 1:2 R:R
-                    
-                new_signal = db.create_signal(
+            elif current_price > m_high:
+                # Bearish Sweep (Monday High swept)
+                signal_direction = "SELL"
+                sl_price = week_high * 1.0005 # 0.05% safety buffer
+                tp_price = current_price - 2.0 * (sl_price - current_price) # 1:2 R:R
+                entry_price = current_price
+                
+            if signal_direction:
+                # Create PENDING signal
+                new_sig = db.create_signal(
                     pair=symbol,
                     direction=signal_direction,
-                    trigger_type=setup_type,
+                    trigger_type="BOS",
                     entry=entry_price,
                     sl=sl_price,
                     tp=tp_price
                 )
-                
-                if new_signal:
-                    print(f"SUCCESS STATELESS: Generated {setup_type} signal for {symbol}!")
-                    tg.alert_new_signal(new_signal)
+                if new_sig:
+                    print(f"Created PENDING signal for {symbol} ({signal_direction} PO3 sweep of Monday range)")
+                    tg.alert_new_signal(new_sig)
                     db.create_system_log(
                         status="SUCCESS",
-                        message=f"Generated {setup_type} {signal_direction} signal for {symbol} (Entry: {entry_price})."
+                        message=f"Created PENDING signal for {symbol} ({signal_direction} PO3 sweep of Monday range)."
                     )
-            
+                    
             scanned_count += 1
-            time.sleep(1.0) # Delay to respect rate limit
+            time.sleep(1.0)
             
         except Exception as e:
-            errors_count += 1
             print(f"Error scanning {symbol}: {e}")
+            errors_count += 1
             time.sleep(1.0)
             
     execution_time = time.time() - start_time
     
-    # Save to global cache variable for API endpoints
     global LATEST_WATCHLIST
     LATEST_WATCHLIST = current_watchlist
     
-    # Write audit log to database
     if errors_count == 0:
         db.create_system_log(
             status="SUCCESS",
-            message=f"Scan completed successfully. Scanned {scanned_count} symbols.",
+            message=f"PO3 Scan completed successfully. Scanned {scanned_count} symbols.",
             execution_time=round(execution_time, 2)
         )
     else:
         db.create_system_log(
             status="WARNING" if errors_count < 3 else "ERROR",
-            message=f"Scan completed with {errors_count} errors. Scanned {scanned_count} symbols.",
+            message=f"PO3 Scan completed with {errors_count} errors. Scanned {scanned_count} symbols.",
             execution_time=round(execution_time, 2)
         )
 
@@ -461,58 +383,63 @@ def update_live_trades():
                 # Check if it has breached Stop Loss first
                 if direction == "BUY" and current_price < sl:
                     db.update_signal_status(signal["id"], "EXPIRED")
-                    db.create_system_log("INFO", f"Signal {symbol} EXPIRED: Price {current_price} breached SL {sl} before 15m trigger.")
+                    db.create_system_log(
+                        status="SUCCESS",
+                        message=f"Signal {symbol} EXPIRED: Price {current_price} breached SL {sl} before 15m trigger."
+                    )
                     print(f"Signal {symbol} EXPIRED (hit SL before entry)")
                     continue
                 elif direction == "SELL" and current_price > sl:
                     db.update_signal_status(signal["id"], "EXPIRED")
-                    db.create_system_log("INFO", f"Signal {symbol} EXPIRED: Price {current_price} breached SL {sl} before 15m trigger.")
+                    db.create_system_log(
+                        status="SUCCESS",
+                        message=f"Signal {symbol} EXPIRED: Price {current_price} breached SL {sl} before 15m trigger."
+                    )
                     print(f"Signal {symbol} EXPIRED (hit SL before entry)")
                     continue
                 
-                # Check if price is within the 1H Fib 0.5 - 0.89 entry retracement zone
-                in_entry_zone = False
-                if direction == "BUY" and current_price <= entry and current_price >= sl:
-                    in_entry_zone = True
-                elif direction == "SELL" and current_price >= entry and current_price <= sl:
-                    in_entry_zone = True
+                # Fetch 15m candles to look for external structure reversal (15m CHOCH)
+                df_15 = fetch_candles(symbol, "15m", limit=60)
+                time.sleep(0.3) # Respect API rate limits
+                
+                if df_15 is not None and len(df_15) >= 15:
+                    df_15_completed = df_15.iloc[:-1].copy()
+                    df_swings_15 = find_swings(df_15_completed, window=5)
                     
-                if in_entry_zone:
-                    # Fetch 15m candles to look for external structure reversal (15m CHOCH)
-                    df_15 = fetch_candles(symbol, "15m", limit=60)
-                    time.sleep(0.3) # Respect API rate limits
-                    
-                    if df_15 is not None and len(df_15) >= 15:
-                        # Exclude the current live open candle (index -1) when calculating swings
-                        # to ensure swing points are confirmed ONLY by completed 15m candles
-                        df_15_completed = df_15.iloc[:-1].copy()
-                        # Use window=5 to target the major external structure on 15m (ignoring minor internal noise)
-                        df_swings_15 = find_swings(df_15_completed, window=5)
-                        
-                        if direction == "BUY":
-                            swing_high_rows = df_swings_15.dropna(subset=["swing_high"])
-                            if len(swing_high_rows) > 0:
-                                recent_15m_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
-                                last_15m_candle = df_15.iloc[-2]
-                                # Check if 15m candle closed above recent major swing high
-                                if float(last_15m_candle["close"]) > recent_15m_swing_high:
-                                    is_triggered = True
-                        else: # SELL
-                            swing_low_rows = df_swings_15.dropna(subset=["swing_low"])
-                            if len(swing_low_rows) > 0:
-                                recent_15m_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
-                                last_15m_candle = df_15.iloc[-2]
-                                # Check if 15m candle closed below recent major swing low
-                                if float(last_15m_candle["close"]) < recent_15m_swing_low:
-                                    is_triggered = True
-                                    
+                    if direction == "BUY":
+                        swing_high_rows = df_swings_15.dropna(subset=["swing_high"])
+                        if len(swing_high_rows) > 0:
+                            recent_15m_swing_high = float(swing_high_rows.iloc[-1]["swing_high"])
+                            last_15m_candle = df_15.iloc[-2]
+                            if float(last_15m_candle["close"]) > recent_15m_swing_high:
+                                is_triggered = True
+                    else: # SELL
+                        swing_low_rows = df_swings_15.dropna(subset=["swing_low"])
+                        if len(swing_low_rows) > 0:
+                            recent_15m_swing_low = float(swing_low_rows.iloc[-1]["swing_low"])
+                            last_15m_candle = df_15.iloc[-2]
+                            if float(last_15m_candle["close"]) < recent_15m_swing_low:
+                                is_triggered = True
+                                
                 if is_triggered:
                     actual_entry = current_price
+                    # Fetch 1H candles to find the weekly extreme high/low
+                    now_utc = datetime.now(timezone.utc)
+                    current_week_start = now_utc - timedelta(days=now_utc.weekday())
+                    current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                    
+                    df_1h = fetch_candles(symbol, "1h", limit=200)
+                    week_candles = df_1h[df_1h["datetime"] >= current_week_start] if df_1h is not None else []
+                    
                     if direction == "BUY":
-                        actual_risk = actual_entry - sl
+                        actual_sl = float(week_candles["low"].min()) if len(week_candles) > 0 else sl
+                        actual_sl = actual_sl * 0.9995 # 0.05% buffer
+                        actual_risk = actual_entry - actual_sl
                         actual_tp = actual_entry + (2.0 * actual_risk)
                     else: # SELL
-                        actual_risk = sl - actual_entry
+                        actual_sl = float(week_candles["high"].max()) if len(week_candles) > 0 else sl
+                        actual_sl = actual_sl * 1.0005 # 0.05% buffer
+                        actual_risk = actual_sl - actual_entry
                         actual_tp = actual_entry - (2.0 * actual_risk)
                         
                     updated_sig = db.update_signal_status(
@@ -522,11 +449,14 @@ def update_live_trades():
                         actual_tp=actual_tp
                     )
                     if updated_sig:
-                        tg.alert_signal_active(updated_sig)
-                        print(f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal at entry {actual_entry}, TP {actual_tp})")
+                        db.update_signal_sl(signal["id"], actual_sl)
+                        # Fetch updated signal for alert
+                        full_sig = db.get_signal_by_pair(symbol)
+                        tg.alert_signal_active(full_sig)
+                        print(f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal at entry {actual_entry}, TP {actual_tp}, SL {actual_sl})")
                         db.create_system_log(
                             status="SUCCESS",
-                            message=f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal at entry {actual_entry}, TP {actual_tp})."
+                            message=f"Signal {symbol} is now ACTIVE (Confirmed by 15m Reversal at entry {actual_entry}, TP {actual_tp}, SL {actual_sl})."
                         )
                         
             elif status == "ACTIVE":
