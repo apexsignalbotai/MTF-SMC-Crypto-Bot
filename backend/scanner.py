@@ -40,9 +40,9 @@ def get_watched_symbols():
         
         usdt_swaps = []
         for symbol, ticker in tickers.items():
-            # Filter for USDT linear swaps, e.g. "BTC/USDT" or "BTC/USDT:USDT"
+            # Filter for USDT linear swaps, e.g. "BTC/USDT:USDT"
             # quoteVolume represents volume in USDT
-            if ("/USDT" in symbol) and ticker.get("quoteVolume"):
+            if (":USDT" in symbol) and ticker.get("quoteVolume"):
                 usdt_swaps.append({
                     "symbol": symbol,
                     "volume": float(ticker["quoteVolume"])
@@ -52,9 +52,14 @@ def get_watched_symbols():
         usdt_swaps.sort(key=lambda x: x["volume"], reverse=True)
         top_symbols = [item["symbol"] for item in usdt_swaps[:25]]
         
+        # Force Gold 'XAU/USDT:USDT' to be in the list
+        gold_symbol = "XAU/USDT:USDT"
+        if gold_symbol not in top_symbols:
+            top_symbols.append(gold_symbol)
+            
         # Fallback if empty
         if not top_symbols:
-            top_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "LINK/USDT"]
+            top_symbols = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XAU/USDT:USDT"]
             
         # Cache results
         cache_data = {
@@ -68,7 +73,7 @@ def get_watched_symbols():
     except Exception as e:
         print(f"Failed to fetch dynamic symbols: {e}")
         # Default fallback
-        return ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+        return ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XAU/USDT:USDT"]
 
 LATEST_WATCHLIST = []
 
